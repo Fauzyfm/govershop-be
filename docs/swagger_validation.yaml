@@ -1,0 +1,197 @@
+
+  # ==========================================
+  # VALIDATION
+  # ==========================================
+  /api/v1/validate-account:
+    post:
+      tags:
+        - Validation
+      summary: Validasi Akun Game
+      description: |
+        Memvalidasi akun game sebelum topup untuk memastikan ID benar.
+        Menggunakan produk "Check Username" dari Digiflazz.
+        **Biaya validasi akan dikenakan** (termasuk dalam total harga).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - brand
+                - customer_no
+              properties:
+                brand:
+                  type: string
+                  description: Brand/nama game (e.g., MOBILE LEGENDS, FREE FIRE)
+                  example: MOBILE LEGENDS
+                customer_no:
+                  type: string
+                  description: User ID + Zone ID (untuk ML), atau Player ID (untuk game lain)
+                  example: "123456781234"
+            example:
+              brand: MOBILE LEGENDS
+              customer_no: "123456781234"
+      responses:
+        '200':
+          description: Validasi berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Validasi berhasil
+                  data:
+                    type: object
+                    properties:
+                      is_valid:
+                        type: boolean
+                        description: Apakah akun valid
+                        example: true
+                      account_name:
+                        type: string
+                        description: Nama akun (IGN)
+                        example: "PLAYERXYZ"
+                      customer_no:
+                        type: string
+                        example: "123456781234"
+                      brand:
+                        type: string
+                        example: MOBILE LEGENDS
+                      message:
+                        type: string
+                        example: Transaksi Sukses
+                      validation_fee:
+                        type: number
+                        description: Biaya validasi yang dikenakan
+                        example: 9
+        '400':
+          description: Request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Produk validasi tidak ditemukan untuk brand ini
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/calculate-price:
+    post:
+      tags:
+        - Validation
+      summary: Kalkulasi Harga Total
+      description: |
+        Menghitung total harga yang harus dibayar termasuk:
+        - Harga produk
+        - Biaya admin (check username)
+        - Biaya payment gateway (QRIS/VA)
+        
+        **Gunakan endpoint ini sebelum checkout** untuk menampilkan breakdown harga.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - buyer_sku_code
+                - payment_method
+                - brand
+              properties:
+                buyer_sku_code:
+                  type: string
+                  description: SKU produk yang akan dibeli
+                  example: pre29536099
+                payment_method:
+                  type: string
+                  description: Metode pembayaran
+                  enum: [qris, bni_va, bri_va, mandiri_va, permata_va, cimb_niaga_va]
+                  example: qris
+                brand:
+                  type: string
+                  description: Brand untuk check username fee
+                  example: MOBILE LEGENDS
+            example:
+              buyer_sku_code: pre29536099
+              payment_method: qris
+              brand: MOBILE LEGENDS
+      responses:
+        '200':
+          description: Kalkulasi berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Kalkulasi harga berhasil
+                  data:
+                    type: object
+                    properties:
+                      product_price:
+                        type: number
+                        description: Harga produk
+                        example: 38527
+                      admin_fee:
+                        type: number
+                        description: Biaya validasi akun
+                        example: 9
+                      payment_fee:
+                        type: number
+                        description: Biaya payment gateway
+                        example: 750
+                      total_price:
+                        type: number
+                        description: Total yang harus dibayar
+                        example: 39286
+                      product_name:
+                        type: string
+                        example: "Mobile Legends 144 Diamonds (Indonesia)"
+                      payment_method_label:
+                        type: string
+                        example: QRIS
+                      breakdown:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                label:
+                                  type: string
+                                  example: "Mobile Legends 144 Diamonds (Indonesia)"
+                                amount:
+                                  type: number
+                                  example: 38527
+                            example:
+                              - label: "Mobile Legends 144 Diamonds (Indonesia)"
+                                amount: 38527
+                              - label: "Biaya Validasi Akun"
+                                amount: 9
+                              - label: "Biaya QRIS"
+                                amount: 750
+        '400':
+          description: Request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Produk tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

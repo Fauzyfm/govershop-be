@@ -1,0 +1,19 @@
+# Environment files
+.env
+.env.local
+
+# Binary
+*.exe
+govershop-api
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/temp
+simulate_webhook.ps1
+*.log

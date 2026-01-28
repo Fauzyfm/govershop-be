@@ -1,0 +1,1494 @@
+openapi: 3.0.3
+info:
+  title: Govershop API
+  description: |
+    # Govershop Top-up API
+    
+    API untuk aplikasi top-up produk digital (pulsa, paket data, game voucher, dll).
+    
+    ## Integrasi
+    - **Digiflazz** - Supplier produk digital
+    - **Pakasir** - Payment gateway (QRIS, Virtual Account)
+    
+    ## Flow Transaksi
+    1. User browse produk (`GET /products`)
+    2. User buat order (`POST /orders`)
+    3. User pilih metode pembayaran (`POST /orders/{id}/pay`)
+    4. User bayar via QRIS/VA
+    5. Webhook konfirmasi pembayaran
+    6. Sistem proses topup otomatis
+    7. User cek status (`GET /orders/{id}/status`)
+    
+  version: 1.0.0
+  contact:
+    name: Govershop Support
+    email: support@govershop.com
+
+servers:
+  - url: http://localhost:8080
+    description: Development Server (Local)
+  - url: https://api.govershop.com
+    description: Production Server
+
+tags:
+  - name: Products
+    description: Endpoints untuk produk digital
+  - name: Validation
+    description: Endpoints untuk validasi akun dan kalkulasi harga
+  - name: Orders
+    description: Endpoints untuk order dan transaksi
+  - name: Payment
+    description: Endpoints untuk pembayaran
+  - name: Admin
+    description: Endpoints khusus admin
+  - name: Webhooks
+    description: Webhook endpoints untuk callback
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Cek status server
+      responses:
+        '200':
+          description: Server berjalan normal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  # ==========================================
+  # PRODUCTS
+  # ==========================================
+  /api/v1/products:
+    get:
+      tags:
+        - Products
+      summary: Daftar Produk
+      description: |
+        Mengambil daftar semua produk yang tersedia.
+        Bisa difilter berdasarkan category atau brand.
+      parameters:
+        - name: category
+          in: query
+          description: Filter berdasarkan kategori (e.g., Pulsa, Data, Games)
+          required: false
+          schema:
+            type: string
+            example: Pulsa
+        - name: brand
+          in: query
+          description: Filter berdasarkan brand (e.g., TELKOMSEL, XL, MOBILE LEGENDS)
+          required: false
+          schema:
+            type: string
+            example: TELKOMSEL
+      responses:
+        '200':
+          description: Daftar produk berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      products:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Product'
+                      total:
+                        type: integer
+                        example: 14
+
+  /api/v1/products/categories:
+    get:
+      tags:
+        - Products
+      summary: Daftar Kategori
+      description: Mengambil daftar kategori produk yang tersedia
+      responses:
+        '200':
+          description: Daftar kategori berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      categories:
+                        type: array
+                        items:
+                          type: string
+                        example: ["Data", "Games", "Pulsa"]
+
+  /api/v1/products/brands:
+    get:
+      tags:
+        - Products
+      summary: Daftar Brand
+      description: Mengambil daftar brand produk yang tersedia
+      parameters:
+        - name: category
+          in: query
+          description: Filter brand berdasarkan kategori
+          required: false
+          schema:
+            type: string
+            example: Pulsa
+      responses:
+        '200':
+          description: Daftar brand berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      brands:
+                        type: array
+                        items:
+                          type: string
+                        example: ["AXIS", "INDOSAT", "TELKOMSEL", "XL"]
+
+  /api/v1/products/{sku}:
+    get:
+      tags:
+        - Products
+      summary: Detail Produk
+      description: Mengambil detail produk berdasarkan SKU
+      parameters:
+        - name: sku
+          in: path
+          description: Kode SKU produk (buyer_sku_code)
+          required: true
+          schema:
+            type: string
+            example: tsel5
+      responses:
+        '200':
+          description: Detail produk berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Product'
+        '404':
+          description: Produk tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================
+  # VALIDATION
+  # ==========================================
+  /api/v1/validate-account:
+    post:
+      tags:
+        - Validation
+      summary: Validasi Akun Game
+      description: |
+        Memvalidasi akun game sebelum topup untuk memastikan ID benar.
+        Menggunakan produk "Check Username" dari Digiflazz.
+        **Biaya validasi akan dikenakan** (termasuk dalam total harga).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - brand
+                - customer_no
+              properties:
+                brand:
+                  type: string
+                  description: Brand/nama game (e.g., MOBILE LEGENDS, FREE FIRE)
+                  example: MOBILE LEGENDS
+                customer_no:
+                  type: string
+                  description: User ID + Zone ID (untuk ML), atau Player ID (untuk game lain)
+                  example: "123456781234"
+            example:
+              brand: MOBILE LEGENDS
+              customer_no: "123456781234"
+      responses:
+        '200':
+          description: Validasi berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Validasi berhasil
+                  data:
+                    type: object
+                    properties:
+                      is_valid:
+                        type: boolean
+                        description: Apakah akun valid
+                        example: true
+                      account_name:
+                        type: string
+                        description: Nama akun (IGN)
+                        example: "PLAYERXYZ"
+                      customer_no:
+                        type: string
+                        example: "123456781234"
+                      brand:
+                        type: string
+                        example: MOBILE LEGENDS
+                      message:
+                        type: string
+                        example: Transaksi Sukses
+                      validation_fee:
+                        type: number
+                        description: Biaya validasi yang dikenakan
+                        example: 9
+        '400':
+          description: Request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Produk validasi tidak ditemukan untuk brand ini
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/calculate-price:
+    post:
+      tags:
+        - Validation
+      summary: Kalkulasi Harga Total
+      description: |
+        Menghitung total harga yang harus dibayar termasuk:
+        - Harga produk
+        - Biaya admin (check username)
+        
+        **Biaya payment gateway tidak dihitung di sini** (ditanggung/dihitung oleh gateway).
+        **Gunakan endpoint ini sebelum checkout** untuk menampilkan breakdown harga.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - buyer_sku_code
+                - payment_method
+                - brand
+              properties:
+                buyer_sku_code:
+                  type: string
+                  description: SKU produk yang akan dibeli
+                  example: pre29536099
+                payment_method:
+                  type: string
+                  description: Metode pembayaran
+                  enum: [qris, bni_va, bri_va, mandiri_va, permata_va, cimb_niaga_va]
+                  example: qris
+                brand:
+                  type: string
+                  description: Brand untuk check username fee
+                  example: MOBILE LEGENDS
+            example:
+              buyer_sku_code: pre29536099
+              payment_method: qris
+              brand: MOBILE LEGENDS
+      responses:
+        '200':
+          description: Kalkulasi berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Kalkulasi harga berhasil
+                  data:
+                    type: object
+                    properties:
+                      product_price:
+                        type: number
+                        description: Harga produk
+                        example: 38527
+                      admin_fee:
+                        type: number
+                        description: Biaya Admin (Flat)
+                        example: 10
+                      payment_fee:
+                        type: number
+                        description: Biaya payment gateway (ditanggung user via gateway)
+                        example: 0
+                      total_price:
+                        type: number
+                        description: Total yang harus dibayar (produk + admin fee)
+                        example: 38537
+                      product_name:
+                        type: string
+                        example: "Mobile Legends 144 Diamonds (Indonesia)"
+                      payment_method_label:
+                        type: string
+                        example: QRIS
+                      breakdown:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                label:
+                                  type: string
+                                  example: "Mobile Legends 144 Diamonds (Indonesia)"
+                                amount:
+                                  type: number
+                                  example: 38527
+                            example:
+                              - label: "Mobile Legends 144 Diamonds (Indonesia)"
+                                amount: 38527
+                              - label: "Biaya Admin"
+                                amount: 10
+        '400':
+          description: Request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Produk tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==========================================
+  # ORDERS
+  # ==========================================
+  /api/v1/orders:
+    post:
+      tags:
+        - Orders
+      summary: Buat Order Baru
+      description: |
+        Membuat order baru untuk pembelian produk digital.
+        Order akan dibuat dengan status `pending` dan menunggu pembayaran.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - buyer_sku_code
+                - customer_no
+              properties:
+                buyer_sku_code:
+                  type: string
+                  description: Kode SKU produk yang akan dibeli
+                  example: tsel5
+                customer_no:
+                  type: string
+                  description: Nomor tujuan topup (nomor HP, ID game, dll)
+                  example: "081234567890"
+                customer_email:
+                  type: string
+                  description: Email customer (opsional, untuk notifikasi)
+                  example: customer@email.com
+                customer_phone:
+                  type: string
+                  description: Nomor HP customer (opsional, untuk notifikasi)
+                  example: "081234567890"
+                customer_name:
+                  type: string
+                  description: Nama customer (opsional)
+                  example: John Doe
+            example:
+              buyer_sku_code: tsel5
+              customer_no: "081234567890"
+              customer_email: customer@email.com
+              customer_phone: "081234567890"
+              customer_name: John Doe
+      responses:
+        '201':
+          description: Order berhasil dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Order berhasil dibuat
+                  data:
+                    $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Request tidak valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Produk tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/orders/{id}:
+    get:
+      tags:
+        - Orders
+      summary: Detail Order
+      description: Mengambil detail order berdasarkan ID
+      parameters:
+        - name: id
+          in: path
+          description: UUID Order ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '200':
+          description: Detail order berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/OrderResponse'
+        '404':
+          description: Order tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/orders/{id}/pay:
+    post:
+      tags:
+        - Orders
+        - Payment
+      summary: Initiate Payment
+      description: |
+        Memulai proses pembayaran untuk order.
+        Akan mengembalikan QR code (untuk QRIS) atau nomor VA.
+      parameters:
+        - name: id
+          in: path
+          description: UUID Order ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 550e8400-e29b-41d4-a716-446655440000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - payment_method
+              properties:
+                payment_method:
+                  type: string
+                  description: Metode pembayaran yang dipilih
+                  enum:
+                    - qris
+                    - bni_va
+                    - bri_va
+                    - mandiri_va
+                    - permata_va
+                    - cimb_niaga_va
+                  example: qris
+            example:
+              payment_method: qris
+      responses:
+        '200':
+          description: Payment berhasil dibuat
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Pembayaran berhasil dibuat
+                  data:
+                    $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          description: Request tidak valid atau order sudah dibayar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Order tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/orders/{id}/cancel:
+    post:
+      tags:
+        - Orders
+      summary: Cancel Order
+      description: |
+        Membatalkan order yang masih pending atau waiting_payment.
+        Order yang sudah dibayar tidak bisa dibatalkan.
+      parameters:
+        - name: id
+          in: path
+          description: UUID Order ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '200':
+          description: Order berhasil dibatalkan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Order berhasil dibatalkan
+        '400':
+          description: Order tidak dapat dibatalkan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Order tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/orders/{id}/status:
+    get:
+      tags:
+        - Orders
+      summary: Cek Status Order
+      description: Mengecek status order dan pembayaran
+      parameters:
+        - name: id
+          in: path
+          description: UUID Order ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+            example: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '200':
+          description: Status order berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      order_id:
+                        type: string
+                        format: uuid
+                      status:
+                        type: string
+                        enum: [pending, waiting_payment, paid, processing, success, failed, cancelled, refunded]
+                        example: success
+                      status_label:
+                        type: string
+                        example: Berhasil
+                      serial_number:
+                        type: string
+                        description: Serial number dari provider (jika berhasil)
+                        example: "1234567890123456"
+                      message:
+                        type: string
+                        example: Transaksi berhasil
+                      payment:
+                        $ref: '#/components/schemas/PaymentResponse'
+        '404':
+          description: Order tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/payment-methods:
+    get:
+      tags:
+        - Payment
+      summary: Daftar Metode Pembayaran
+      description: Mengambil daftar metode pembayaran yang tersedia
+      responses:
+        '200':
+          description: Daftar metode pembayaran
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      payment_methods:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            code:
+                              type: string
+                              example: qris
+                            name:
+                              type: string
+                              example: QRIS
+                            type:
+                              type: string
+                              enum: [qris, va]
+                              example: qris
+
+  # ==========================================
+  # ADMIN
+  # ==========================================
+  /api/v1/admin/balance:
+    get:
+      tags:
+        - Admin
+      summary: Cek Saldo Digiflazz
+      description: Mengecek saldo deposit di akun Digiflazz
+      responses:
+        '200':
+          description: Saldo berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      deposit:
+                        type: number
+                        format: float
+                        description: Saldo deposit dalam Rupiah
+                        example: 1500000
+
+  /api/v1/admin/dashboard:
+    get:
+      tags:
+        - Admin
+      summary: Dashboard Statistics
+      description: Mengambil statistik untuk dashboard admin
+      responses:
+        '200':
+          description: Statistik dashboard
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      deposit:
+                        type: number
+                        example: 1500000
+                      order_counts:
+                        type: object
+                        additionalProperties:
+                          type: integer
+                        example:
+                          pending: 5
+                          success: 120
+                          failed: 3
+                      today_orders:
+                        type: integer
+                        example: 25
+                      today_revenue:
+                        type: number
+                        example: 500000
+                      last_sync:
+                        $ref: '#/components/schemas/SyncLog'
+
+  /api/v1/admin/orders:
+    get:
+      tags:
+        - Admin
+      summary: Daftar Semua Order
+      description: Mengambil daftar semua order (untuk admin)
+      responses:
+        '200':
+          description: Daftar order berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      orders:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/OrderResponse'
+                      total:
+                        type: integer
+                        example: 100
+
+  /api/v1/admin/sync/products:
+    post:
+      tags:
+        - Admin
+      summary: Sync Produk dari Digiflazz
+      description: |
+        Melakukan sinkronisasi produk dari Digiflazz.
+        Akan mengupdate harga, ketersediaan, dan menambah produk baru.
+        **CATATAN:** Field custom (display_name, is_best_seller, tags) tidak akan di-overwrite saat sync.
+      responses:
+        '200':
+          description: Sync berhasil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Sync berhasil
+                  data:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                        description: Total produk dari Digiflazz
+                        example: 14
+                      updated:
+                        type: integer
+                        description: Jumlah produk yang diupdate
+                        example: 14
+                      failed:
+                        type: integer
+                        description: Jumlah produk yang gagal sync
+                        example: 0
+
+  /api/v1/admin/products:
+    get:
+      tags:
+        - Admin
+      summary: Daftar Produk (Admin)
+      description: |
+        Mengambil daftar semua produk termasuk yang unavailable.
+        Digunakan untuk admin management.
+      parameters:
+        - name: limit
+          in: query
+          description: Jumlah produk per halaman
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          description: Offset untuk pagination
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Daftar produk berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      products:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AdminProduct'
+                      total:
+                        type: integer
+                        example: 1000
+                      limit:
+                        type: integer
+                        example: 50
+                      offset:
+                        type: integer
+                        example: 0
+
+  /api/v1/admin/products/tags:
+    get:
+      tags:
+        - Admin
+      summary: Daftar Semua Tags
+      description: Mengambil daftar semua unique tags yang ada di products
+      responses:
+        '200':
+          description: Tags berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      tags:
+                        type: array
+                        items:
+                          type: string
+                        example: ["diamond", "wdp", "weekly_pass", "promo"]
+
+  /api/v1/admin/products/best-sellers:
+    get:
+      tags:
+        - Admin
+      summary: Daftar Best Seller Products
+      description: Mengambil produk yang ditandai sebagai best seller
+      responses:
+        '200':
+          description: Best seller berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      products:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Product'
+                      total:
+                        type: integer
+                        example: 5
+
+  /api/v1/admin/products/{sku}:
+    get:
+      tags:
+        - Admin
+      summary: Detail Produk (Admin)
+      description: Mengambil detail lengkap produk termasuk harga beli dan markup
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          description: SKU produk (buyer_sku_code)
+          schema:
+            type: string
+            example: ml5
+      responses:
+        '200':
+          description: Detail produk berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/AdminProduct'
+        '404':
+          description: Produk tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    
+    put:
+      tags:
+        - Admin
+      summary: Update Produk
+      description: |
+        Update field custom pada produk.
+        Field yang bisa diupdate:
+        - display_name: Nama custom untuk ditampilkan di FE
+        - is_best_seller: Flag best seller
+        - markup_percent: Persentase markup harga
+        - discount_price: Harga promo
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          description: SKU produk (buyer_sku_code)
+          schema:
+            type: string
+            example: ml5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                  nullable: true
+                  description: Nama custom untuk FE (null untuk reset)
+                  example: "Mobile Legends 5 Diamond"
+                is_best_seller:
+                  type: boolean
+                  description: Flag best seller
+                  example: true
+                markup_percent:
+                  type: number
+                  description: Persentase markup (akan recalculate selling_price)
+                  example: 5.0
+                discount_price:
+                  type: number
+                  nullable: true
+                  description: Harga promo (null untuk hapus promo)
+                  example: 5000
+            example:
+              display_name: "Mobile Legends 5 Diamond"
+              is_best_seller: true
+              markup_percent: 5.0
+      responses:
+        '200':
+          description: Produk berhasil diupdate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Produk berhasil diupdate
+                  data:
+                    $ref: '#/components/schemas/AdminProduct'
+        '404':
+          description: Produk tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/products/{sku}/tags:
+    post:
+      tags:
+        - Admin
+      summary: Tambah Tag ke Produk
+      description: Menambahkan tag baru ke produk
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          description: SKU produk (buyer_sku_code)
+          schema:
+            type: string
+            example: ml5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tag
+              properties:
+                tag:
+                  type: string
+                  description: Tag yang akan ditambahkan
+                  example: diamond
+            example:
+              tag: diamond
+      responses:
+        '200':
+          description: Tag berhasil ditambahkan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Tag berhasil ditambahkan
+
+  /api/v1/admin/products/{sku}/tags/{tag}:
+    delete:
+      tags:
+        - Admin
+      summary: Hapus Tag dari Produk
+      description: Menghapus tag dari produk
+      parameters:
+        - name: sku
+          in: path
+          required: true
+          description: SKU produk (buyer_sku_code)
+          schema:
+            type: string
+            example: ml5
+        - name: tag
+          in: path
+          required: true
+          description: Tag yang akan dihapus
+          schema:
+            type: string
+            example: diamond
+      responses:
+        '200':
+          description: Tag berhasil dihapus
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Tag berhasil dihapus
+
+  # ==========================================
+  # WEBHOOKS
+  # ==========================================
+  /api/v1/webhook/pakasir:
+    post:
+      tags:
+        - Webhooks
+      summary: Pakasir Payment Webhook
+      description: |
+        Endpoint untuk menerima callback dari Pakasir saat pembayaran berhasil.
+        **Endpoint ini dipanggil oleh server Pakasir, bukan oleh frontend.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: number
+                  example: 10000
+                order_id:
+                  type: string
+                  example: GVS-1234567890-ABCDEF
+                project:
+                  type: string
+                  example: govershop
+                status:
+                  type: string
+                  example: completed
+                payment_method:
+                  type: string
+                  example: qris
+                completed_at:
+                  type: string
+                  format: date-time
+                  example: "2024-01-26T12:00:00+07:00"
+      responses:
+        '200':
+          description: Webhook diterima
+
+  /api/v1/webhook/digiflazz:
+    post:
+      tags:
+        - Webhooks
+      summary: Digiflazz Transaction Webhook
+      description: |
+        Endpoint untuk menerima callback dari Digiflazz saat status transaksi berubah.
+        **Endpoint ini dipanggil oleh server Digiflazz, bukan oleh frontend.**
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    trx_id:
+                      type: string
+                    ref_id:
+                      type: string
+                      example: GVS-1234567890-ABCDEF
+                    customer_no:
+                      type: string
+                      example: "081234567890"
+                    buyer_sku_code:
+                      type: string
+                      example: tsel5
+                    message:
+                      type: string
+                      example: Transaksi Berhasil
+                    status:
+                      type: string
+                      enum: [Pending, Sukses, Gagal]
+                      example: Sukses
+                    rc:
+                      type: string
+                      example: "00"
+                    sn:
+                      type: string
+                      example: "1234567890123456"
+                    price:
+                      type: number
+                      example: 5500
+      responses:
+        '200':
+          description: Webhook diterima
+
+components:
+  schemas:
+    Product:
+      type: object
+      properties:
+        buyer_sku_code:
+          type: string
+          description: Kode SKU unik produk
+          example: tsel5
+        product_name:
+          type: string
+          description: Nama produk (menggunakan display_name jika tersedia)
+          example: "Telkomsel 5.000"
+        category:
+          type: string
+          description: Kategori produk
+          example: Pulsa
+        brand:
+          type: string
+          description: Brand produk
+          example: TELKOMSEL
+        type:
+          type: string
+          description: Tipe produk
+          example: Umum
+        price:
+          type: number
+          format: float
+          description: Harga jual (sudah termasuk markup)
+          example: 6000
+        original_price:
+          type: number
+          format: float
+          description: Harga normal (jika sedang promo)
+          example: 6500
+        is_available:
+          type: boolean
+          description: Status ketersediaan produk
+          example: true
+        unlimited_stock:
+          type: boolean
+          example: true
+        stock:
+          type: integer
+          example: 0
+        description:
+          type: string
+          example: "Pulsa Telkomsel Rp 5.000"
+        is_promo:
+          type: boolean
+          description: Apakah produk sedang promo
+          example: false
+        is_best_seller:
+          type: boolean
+          description: Flag best seller
+          example: false
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags produk
+          example: ["pulsa", "promo"]
+
+    AdminProduct:
+      type: object
+      description: Product dengan detail admin (termasuk harga beli dan markup)
+      properties:
+        id:
+          type: integer
+          example: 1
+        buyer_sku_code:
+          type: string
+          example: tsel5
+        product_name:
+          type: string
+          description: Nama original dari Digiflazz
+          example: "Telkomsel 5.000"
+        display_name:
+          type: string
+          nullable: true
+          description: Nama custom untuk FE (null jika belum diset)
+          example: "Pulsa Telkomsel 5rb"
+        category:
+          type: string
+          example: Pulsa
+        brand:
+          type: string
+          example: TELKOMSEL
+        type:
+          type: string
+          example: Umum
+        buy_price:
+          type: number
+          description: Harga beli dari Digiflazz
+          example: 5500
+        markup_percent:
+          type: number
+          description: Persentase markup
+          example: 3.0
+        selling_price:
+          type: number
+          description: Harga jual ke customer
+          example: 5665
+        discount_price:
+          type: number
+          nullable: true
+          description: Harga promo (null jika tidak ada)
+          example: null
+        is_available:
+          type: boolean
+          example: true
+        is_best_seller:
+          type: boolean
+          example: false
+        tags:
+          type: array
+          items:
+            type: string
+          example: []
+        last_sync_at:
+          type: string
+          format: date-time
+          example: "2026-01-26T12:00:00Z"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    OrderResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUID Order
+          example: 550e8400-e29b-41d4-a716-446655440000
+        ref_id:
+          type: string
+          description: Reference ID untuk tracking
+          example: GVS-1234567890-ABCDEF
+        product_name:
+          type: string
+          example: "Telkomsel 5.000"
+        customer_no:
+          type: string
+          description: Nomor tujuan topup
+          example: "081234567890"
+        price:
+          type: number
+          format: float
+          example: 6000
+        status:
+          type: string
+          enum: [pending, waiting_payment, paid, processing, success, failed, cancelled, refunded]
+          example: pending
+        status_label:
+          type: string
+          description: Label status dalam bahasa Indonesia
+          example: Menunggu Pembayaran
+        serial_number:
+          type: string
+          description: Serial number dari provider (jika berhasil)
+          example: "1234567890123456"
+        message:
+          type: string
+          example: ""
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-01-26T12:00:00Z"
+        completed_at:
+          type: string
+          format: date-time
+          example: "2024-01-26T12:05:00Z"
+        payment:
+          $ref: '#/components/schemas/PaymentResponse'
+
+    PaymentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 660e8400-e29b-41d4-a716-446655440000
+        order_id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        amount:
+          type: number
+          description: Harga produk
+          example: 6000
+        fee:
+          type: number
+          description: Biaya payment gateway
+          example: 750
+        total_payment:
+          type: number
+          description: Total yang harus dibayar
+          example: 6750
+        payment_method:
+          type: string
+          enum: [qris, bni_va, bri_va, mandiri_va, permata_va, cimb_niaga_va]
+          example: qris
+        payment_number:
+          type: string
+          description: QR code string (untuk QRIS) atau nomor VA
+          example: "00020101021226610016ID.CO.SHOPEE.WWW..."
+        status:
+          type: string
+          enum: [pending, completed, expired, cancelled]
+          example: pending
+        expired_at:
+          type: string
+          format: date-time
+          description: Waktu kadaluarsa pembayaran
+          example: "2024-01-26T12:30:00Z"
+        expired_in:
+          type: integer
+          description: Detik menuju kadaluarsa
+          example: 1800
+
+    SyncLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        sync_type:
+          type: string
+          example: prepaid
+        total_products:
+          type: integer
+          example: 14
+        new_products:
+          type: integer
+          example: 0
+        updated_products:
+          type: integer
+          example: 14
+        failed_products:
+          type: integer
+          example: 0
+        status:
+          type: string
+          enum: [running, success, failed]
+          example: success
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "Produk tidak ditemukan"
