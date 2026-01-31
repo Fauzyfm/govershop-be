@@ -93,10 +93,16 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 		BuyerSKUCode: checkUserSKU,
 		CustomerNo:   req.CustomerNo,
 		RefID:        refID,
-		Testing:      false, // Force production mode as requested
+		Testing:      false, // Production mode
 	})
 
+	if resp != nil {
+		respJSON, _ := json.Marshal(resp)
+		fmt.Printf("🔍 DEBUG DIGIFLAZZ RESPONSE: %s\n", string(respJSON))
+	}
+
 	if err != nil {
+		fmt.Printf("❌ DIGIFLAZZ ERROR: %v\n", err)
 		InternalError(w, fmt.Sprintf("Gagal validasi akun: %v", err))
 		return
 	}
@@ -105,13 +111,49 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 	isValid := resp.Data.Status == "Sukses"
 	accountName := ""
 	message := resp.Data.Message
+	refID = resp.Data.RefID // Update refID from response just in case
+
+	// If Pending, retry check status a few times
+	if resp.Data.Status == "Pending" {
+		maxRetries := 3
+		for i := 0; i < maxRetries; i++ {
+			time.Sleep(2 * time.Second) // Wait 2 seconds
+
+			// Check status (idempotent call with same refID)
+			retryResp, err := h.digiflazzSvc.CreateTransaction(digiflazz.TopupRequest{
+				BuyerSKUCode: checkUserSKU,
+				CustomerNo:   req.CustomerNo,
+				RefID:        refID,
+				Testing:      false,
+			})
+
+			if err == nil {
+				if retryResp != nil {
+					respJSON, _ := json.Marshal(retryResp)
+					fmt.Printf("🔄 RETRY %d RESPONSE: %s\n", i+1, string(respJSON))
+				}
+
+				if retryResp.Data.Status == "Sukses" {
+					isValid = true
+					resp.Data = retryResp.Data
+					message = retryResp.Data.Message
+					break
+				}
+				if retryResp.Data.Status == "Gagal" {
+					isValid = false
+					message = retryResp.Data.Message
+					break
+				}
+			}
+		}
+	}
 
 	if isValid {
 		// Extract account name from serial number or message
 		// Format SN biasanya: "USERNAME" atau ada di message
 		accountName = resp.Data.SN
 		if accountName == "" {
-			accountName = "Akun Valid"
+			accountName = "Akun Valid (Nama tidak muncul)"
 		}
 	}
 

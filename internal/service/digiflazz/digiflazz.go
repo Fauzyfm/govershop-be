@@ -96,6 +96,9 @@ func (s *Service) GetPriceList(cmd string) ([]model.DigiflazzProduct, error) {
 		return nil, err
 	}
 
+	// DEBUG LOG
+	fmt.Printf("🔍 PRICE LIST RAW: %s\n", string(resp))
+
 	var result PriceListResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse price list response: %w", err)
@@ -133,8 +136,20 @@ type TopupResponse struct {
 
 // CreateTransaction creates a topup transaction
 func (s *Service) CreateTransaction(req TopupRequest) (*TopupResponse, error) {
+	// Determine which key to use based on transaction type (Testing vs Real)
+	var apiKey string
+	if req.Testing {
+		apiKey = s.config.GetDigiflazzKey() // Use default logic (likely DevKey in dev)
+	} else {
+		apiKey = s.config.DigiflazzAPIKey // Force ProdKey for real transactions
+		// Fallback for safety if ProdKey is empty (e.g. misconfig in dev)
+		if apiKey == "" {
+			apiKey = s.config.GetDigiflazzKey()
+		}
+	}
+
 	// Signature: md5(username + key + ref_id)
-	signature := s.GenerateSignature(s.config.DigiflazzUsername + s.config.GetDigiflazzKey() + req.RefID)
+	signature := s.GenerateSignature(s.config.DigiflazzUsername + apiKey + req.RefID)
 
 	payload := map[string]interface{}{
 		"username":       s.config.DigiflazzUsername,
