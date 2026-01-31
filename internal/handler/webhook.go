@@ -132,18 +132,26 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 	_ = h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusProcessing)
 
 	// Create transaction with Digiflazz
-	resp, err := h.digiflazzSvc.CreateTransaction(digiflazz.TopupRequest{
+	// Force Testing: false because user wants real transactions even if ENV is not explicitly set to production
+	req := digiflazz.TopupRequest{
 		BuyerSKUCode: order.BuyerSKUCode,
 		CustomerNo:   order.CustomerNo,
 		RefID:        order.RefID,
-		Testing:      h.config.IsDevelopment(),
-	})
+		Testing:      false,
+	}
+
+	resp, err := h.digiflazzSvc.CreateTransaction(req)
 
 	if err != nil {
 		log.Printf("[Topup] Failed to create transaction: %v", err)
+		// Check if it's a "Signature Anda salah" error or IP error
 		_ = h.orderRepo.UpdateDigiflazzResponse(ctx, order.ID, model.OrderStatusFailed, "", "", "", err.Error())
 		return
 	}
+
+	// Log Raw Response for debugging
+	respJSON, _ := json.Marshal(resp)
+	log.Printf("[Topup] Digiflazz Raw Response: %s", string(respJSON))
 
 	log.Printf("[Topup] Digiflazz response: status=%s, message=%s", resp.Data.Status, resp.Data.Message)
 
