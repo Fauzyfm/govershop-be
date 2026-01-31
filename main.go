@@ -92,6 +92,7 @@ func main() {
 	mux.HandleFunc("POST /api/v1/orders/{id}/pay", orderHandler.InitiatePayment)
 	mux.HandleFunc("POST /api/v1/orders/{id}/cancel", orderHandler.CancelOrder)
 	mux.HandleFunc("GET /api/v1/orders/{id}/status", orderHandler.GetOrderStatus)
+	mux.HandleFunc("GET /api/v1/orders/track", orderHandler.TrackOrders)
 
 	// Payment methods
 	mux.HandleFunc("GET /api/v1/payment-methods", orderHandler.GetPaymentMethods)
@@ -116,6 +117,8 @@ func main() {
 	mux.HandleFunc("GET /api/v1/admin/products/best-sellers", adminHandler.GetBestSellers)
 	mux.HandleFunc("GET /api/v1/admin/products/{sku}", adminHandler.GetAdminProduct)
 	mux.HandleFunc("PUT /api/v1/admin/products/{sku}", adminHandler.UpdateAdminProduct)
+	mux.HandleFunc("PUT /api/v1/admin/products/{sku}/image", adminHandler.UpdateProductImage)
+	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/image", adminHandler.DeleteProductImage)
 	mux.HandleFunc("POST /api/v1/admin/products/{sku}/tags", adminHandler.AddProductTag)
 	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/tags/{tag}", adminHandler.RemoveProductTag)
 

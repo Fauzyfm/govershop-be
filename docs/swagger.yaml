@@ -166,8 +166,7 @@ paths:
                       brands:
                         type: array
                         items:
-                          type: string
-                        example: ["AXIS", "INDOSAT", "TELKOMSEL", "XL"]
+                          $ref: '#/components/schemas/Brand'
 
   /api/v1/products/{sku}:
     get:
@@ -469,6 +468,43 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Produk tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+
+  /api/v1/orders/track:
+    get:
+      tags:
+        - Orders
+      summary: Track Order
+      description: Track order history by phone number
+      parameters:
+        - name: phone
+          in: query
+          description: Phone number used for orders
+          required: true
+          schema:
+            type: string
+            example: "081234567890"
+      responses:
+        '200':
+          description: List order berhasil diambil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Phone number required
           content:
             application/json:
               schema:
@@ -798,6 +834,67 @@ paths:
                 properties:
                   success:
                     type: boolean
+                    example: true
+
+  /api/v1/admin/products/{sku}/image:
+    put:
+      tags:
+        - Admin
+      summary: Set Image Product
+      description: Set or update product/brand image
+      parameters:
+        - name: sku
+          in: path
+          description: Buyer SKU Code
+          required: true
+          schema:
+            type: string
+        - name: image_url
+          in: query
+          description: URL of the image
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Image berhasil diupdate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Product image updated successfully"
+    delete:
+      tags:
+        - Admin
+      summary: Delete Image Product
+      description: Remove product/brand image
+      parameters:
+        - name: sku
+          in: path
+          description: Buyer SKU Code
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Image berhasil dihapus
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Product image deleted successfully"
                     example: true
                   data:
                     type: object
@@ -1289,6 +1386,21 @@ components:
             type: string
           description: Tags produk
           example: ["pulsa", "promo"]
+        image_url:
+          type: string
+          description: URL gambar brand/produk
+          example: "https://example.com/image.png"
+
+    Brand:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "TELKOMSEL"
+        image_url:
+          type: string
+          nullable: true
+          example: "https://example.com/logo.png"
 
     AdminProduct:
       type: object

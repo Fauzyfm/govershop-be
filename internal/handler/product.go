@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"govershop-api/internal/model"
 	"govershop-api/internal/repository"
 )
 
@@ -120,7 +121,7 @@ func (h *ProductHandler) GetBrands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if brands == nil {
-		brands = []string{}
+		brands = []model.Brand{}
 	}
 
 	Success(w, "", map[string]interface{}{

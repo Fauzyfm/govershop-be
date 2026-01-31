@@ -34,6 +34,7 @@ type Product struct {
 	DisplayName  *string  `json:"display_name,omitempty" db:"display_name"` // Custom name for FE
 	IsBestSeller bool     `json:"is_best_seller" db:"is_best_seller"`       // Best seller flag
 	Tags         []string `json:"tags,omitempty" db:"tags"`                 // Product tags (e.g., "diamond", "wdp")
+	ImageURL     *string  `json:"image_url,omitempty" db:"image_url"`       // Brand/game logo URL
 }
 
 // ProductResponse is the response format for FE (with calculated final price)
@@ -49,9 +50,10 @@ type ProductResponse struct {
 	UnlimitedStock bool     `json:"unlimited_stock"`
 	Stock          int      `json:"stock,omitempty"`
 	Description    string   `json:"description,omitempty"`
-	IsPromo        bool     `json:"is_promo"`       // True if discounted
-	IsBestSeller   bool     `json:"is_best_seller"` // Best seller flag
-	Tags           []string `json:"tags,omitempty"` // Product tags
+	IsPromo        bool     `json:"is_promo"`            // True if discounted
+	IsBestSeller   bool     `json:"is_best_seller"`      // Best seller flag
+	Tags           []string `json:"tags,omitempty"`      // Product tags
+	ImageURL       *string  `json:"image_url,omitempty"` // Brand/game logo URL
 }
 
 // ToResponse converts Product to ProductResponse for FE
@@ -76,6 +78,7 @@ func (p *Product) ToResponse() ProductResponse {
 		IsPromo:        false,
 		IsBestSeller:   p.IsBestSeller,
 		Tags:           p.Tags,
+		ImageURL:       p.ImageURL,
 	}
 
 	// If there's a discount price, use it
@@ -105,4 +108,10 @@ type DigiflazzProduct struct {
 	StartCutOff         string  `json:"start_cut_off"`
 	EndCutOff           string  `json:"end_cut_off"`
 	Desc                string  `json:"desc"`
+}
+
+// Brand represents a product brand
+type Brand struct {
+	Name     string  `json:"name"`
+	ImageURL *string `json:"image_url"`
 }

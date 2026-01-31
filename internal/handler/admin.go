@@ -352,6 +352,49 @@ func (h *AdminHandler) GetBestSellers(w http.ResponseWriter, r *http.Request) {
 }
 
 // Helper function to parse int from string
+// UpdateProductImage handles PUT /api/v1/admin/products/{sku}/image
+func (h *AdminHandler) UpdateProductImage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sku := r.PathValue("sku")
+
+	var req struct {
+		ImageURL string `json:"image_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		BadRequest(w, "Format request tidak valid")
+		return
+	}
+
+	if req.ImageURL == "" {
+		BadRequest(w, "Image URL wajib diisi")
+		return
+	}
+
+	if err := h.productRepo.UpdateImageURL(ctx, sku, &req.ImageURL); err != nil {
+		log.Printf("[Admin] Failed to update product image: %v", err)
+		InternalError(w, "Gagal mengupdate gambar produk")
+		return
+	}
+
+	Success(w, "Gambar produk berhasil diupdate", nil)
+}
+
+// DeleteProductImage handles DELETE /api/v1/admin/products/{sku}/image
+func (h *AdminHandler) DeleteProductImage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sku := r.PathValue("sku")
+
+	// Set image_url to nil/null
+	if err := h.productRepo.UpdateImageURL(ctx, sku, nil); err != nil {
+		log.Printf("[Admin] Failed to delete product image: %v", err)
+		InternalError(w, "Gagal menghapus gambar produk")
+		return
+	}
+
+	Success(w, "Gambar produk berhasil dihapus", nil)
+}
+
+// Helper function to parse int from string
 func parseInt(s string) (int, error) {
 	var i int
 	_, err := fmt.Sscanf(s, "%d", &i)

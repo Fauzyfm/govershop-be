@@ -293,3 +293,66 @@ func generateRandomString(length int) string {
 	}
 	return string(result)
 }
+
+// TrackOrders handles GET /api/v1/orders/track?phone=xxx
+func (h *OrderHandler) TrackOrders(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	phone := r.URL.Query().Get("phone")
+	if phone == "" {
+		BadRequest(w, "Nomor telepon wajib diisi")
+		return
+	}
+
+	// Validate phone format (basic check)
+	if len(phone) < 10 {
+		BadRequest(w, "Nomor telepon tidak valid")
+		return
+	}
+
+	// Get orders by phone
+	orders, err := h.orderRepo.GetByCustomerPhone(ctx, phone, 20)
+	if err != nil {
+		log.Printf("[TrackOrders] Error getting orders: %v", err)
+		InternalError(w, "Gagal mengambil data pesanan")
+		return
+	}
+
+	// Convert to response format
+	var responses []map[string]interface{}
+	for _, order := range orders {
+		// Get payment info for each order
+		payment, _ := h.paymentRepo.GetByOrderID(ctx, order.ID)
+
+		resp := map[string]interface{}{
+			"id":           order.ID,
+			"ref_id":       order.RefID,
+			"product_name": order.ProductName,
+			"customer_no":  order.CustomerNo,
+			"price":        order.SellingPrice,
+			"status":       order.Status,
+			"status_label": order.GetStatusLabel(),
+			"created_at":   order.CreatedAt,
+		}
+
+		if order.SerialNumber != "" {
+			resp["serial_number"] = order.SerialNumber
+		}
+		if order.DigiflazzMsg != "" {
+			resp["message"] = order.DigiflazzMsg
+		}
+		if order.CompletedAt != nil {
+			resp["completed_at"] = order.CompletedAt
+		}
+		if payment != nil {
+			resp["payment_method"] = payment.PaymentMethod
+		}
+
+		responses = append(responses, resp)
+	}
+
+	Success(w, "", map[string]interface{}{
+		"orders": responses,
+		"total":  len(responses),
+	})
+}

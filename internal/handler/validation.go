@@ -93,7 +93,7 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 		BuyerSKUCode: checkUserSKU,
 		CustomerNo:   req.CustomerNo,
 		RefID:        refID,
-		Testing:      h.config.IsDevelopment(),
+		Testing:      false, // Force production mode as requested
 	})
 
 	if err != nil {
