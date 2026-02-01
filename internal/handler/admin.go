@@ -200,6 +200,12 @@ func (h *AdminHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 		orderCounts = map[string]int{"pending": 0, "success": 0, "failed": 0}
 	}
 
+	// Merge "waiting_payment" into "pending" for dashboard display
+	if count, ok := orderCounts["waiting_payment"]; ok {
+		orderCounts["pending"] += count
+		delete(orderCounts, "waiting_payment") // Optional: remove the raw key if frontend purely relies on 'pending'
+	}
+
 	// Get today's stats
 	todayOrders, todayRevenue, err := h.orderRepo.GetTodayStats(ctx)
 	if err != nil {

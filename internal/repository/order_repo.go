@@ -196,9 +196,15 @@ func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int,
 	argCounter := 1
 
 	if status != "" && status != "all" {
-		conditions = append(conditions, fmt.Sprintf("status = $%d", argCounter))
-		args = append(args, status)
-		argCounter++
+		if status == "pending" {
+			conditions = append(conditions, fmt.Sprintf("status IN ($%d, $%d)", argCounter, argCounter+1))
+			args = append(args, "pending", "waiting_payment")
+			argCounter += 2
+		} else {
+			conditions = append(conditions, fmt.Sprintf("status = $%d", argCounter))
+			args = append(args, status)
+			argCounter++
+		}
 	}
 
 	if search != "" {
