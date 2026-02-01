@@ -895,7 +895,6 @@ paths:
                   message:
                     type: string
                     example: "Product image deleted successfully"
-                    example: true
                   data:
                     type: object
                     properties:

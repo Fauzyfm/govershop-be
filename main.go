@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"embed"
 	"govershop-api/internal/config"
 	"govershop-api/internal/handler"
 	"govershop-api/internal/middleware"
@@ -16,6 +17,9 @@ import (
 	"govershop-api/internal/service/digiflazz"
 	"govershop-api/internal/service/pakasir"
 )
+
+//go:embed docs/*
+var docsFS embed.FS
 
 func main() {
 	// Load configuration
@@ -63,17 +67,21 @@ func main() {
 	})
 
 	// Swagger Documentation
+	// read from embedded FS
+	indexHTML, _ := docsFS.ReadFile("docs/index.html")
+	swaggerYAML, _ := docsFS.ReadFile("docs/swagger.yaml")
+
 	mux.HandleFunc("GET /docs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeFile(w, r, "docs/index.html")
+		w.Write(indexHTML)
 	})
 	mux.HandleFunc("GET /docs/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeFile(w, r, "docs/index.html")
+		w.Write(indexHTML)
 	})
 	mux.HandleFunc("GET /docs/swagger.yaml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-		http.ServeFile(w, r, "docs/swagger.yaml")
+		w.Write(swaggerYAML)
 	})
 
 	// ==========================================
@@ -142,12 +150,12 @@ func main() {
 		// Serve docs without JSON middleware
 		if r.URL.Path == "/docs" || r.URL.Path == "/docs/" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			http.ServeFile(w, r, "docs/index.html")
+			w.Write(indexHTML)
 			return
 		}
 		if r.URL.Path == "/docs/swagger.yaml" {
 			w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-			http.ServeFile(w, r, "docs/swagger.yaml")
+			w.Write(swaggerYAML)
 			return
 		}
 		// All other routes go through middleware chain
