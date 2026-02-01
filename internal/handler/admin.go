@@ -11,7 +11,48 @@ import (
 	"govershop-api/internal/model"
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
+
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
+
+// LoginRequest handles admin login
+type LoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// Login handles POST /api/v1/admin/login
+func (h *AdminHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		BadRequest(w, "Format request tidak valid")
+		return
+	}
+
+	// Validate credentials from config (env)
+	if req.Username != h.config.AdminUsername || req.Password != h.config.AdminPassword {
+		http.Error(w, "Username atau password salah", http.StatusUnauthorized)
+		return
+	}
+
+	// Generate JWT
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": req.Username,
+		"exp": time.Now().Add(time.Hour * 24).Unix(), // 24 hours
+	})
+
+	tokenString, err := token.SignedString([]byte(h.config.JWTSecret))
+	if err != nil {
+		InternalError(w, "Gagal generate token")
+		return
+	}
+
+	Success(w, "Login berhasil", map[string]string{
+		"token": tokenString,
+	})
+}
 
 // AdminHandler handles admin-related HTTP requests
 type AdminHandler struct {
@@ -112,8 +153,21 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	// Get pagination params
 	limit := 50
 	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := parseInt(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := parseInt(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
 
-	orders, err := h.orderRepo.GetAll(ctx, limit, offset)
+	search := r.URL.Query().Get("search")
+	status := r.URL.Query().Get("status")
+
+	orders, total, err := h.orderRepo.GetAll(ctx, limit, offset, search, status)
 	if err != nil {
 		InternalError(w, "Gagal mengambil data order")
 		return
@@ -121,7 +175,9 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 	Success(w, "", map[string]interface{}{
 		"orders": orders,
-		"total":  len(orders),
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
 	})
 }
 
@@ -130,22 +186,44 @@ func (h *AdminHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Get balance
-	balance, _ := h.digiflazzSvc.CheckBalance()
+	var deposit float64
+	if balance, err := h.digiflazzSvc.CheckBalance(); err == nil && balance != nil {
+		deposit = balance.Data.Deposit
+	} else {
+		log.Printf("[Dashboard] Failed to check balance: %v", err)
+	}
 
 	// Get order counts
-	orderCounts, _ := h.orderRepo.CountByStatus(ctx)
+	orderCounts, err := h.orderRepo.CountByStatus(ctx)
+	if err != nil {
+		log.Printf("[Dashboard] Failed to count orders: %v", err)
+		orderCounts = map[string]int{"pending": 0, "success": 0, "failed": 0}
+	}
 
 	// Get today's stats
-	todayOrders, todayRevenue, _ := h.orderRepo.GetTodayStats(ctx)
+	todayOrders, todayRevenue, err := h.orderRepo.GetTodayStats(ctx)
+	if err != nil {
+		log.Printf("[Dashboard] Failed to get today stats: %v", err)
+	}
 
 	// Get last sync info
-	lastSync, _ := h.syncLogRepo.GetLastSync(ctx, "prepaid")
+	lastSync, err := h.syncLogRepo.GetLastSync(ctx, "prepaid")
+	if err != nil {
+		log.Printf("[Dashboard] Failed to get last sync: %v", err)
+	}
+
+	// Get total revenue (all time)
+	totalRevenue, err := h.orderRepo.GetTotalRevenue(ctx)
+	if err != nil {
+		log.Printf("[Dashboard] Failed to get total revenue: %v", err)
+	}
 
 	Success(w, "", map[string]interface{}{
-		"deposit":       balance.Data.Deposit,
+		"deposit":       deposit,
 		"order_counts":  orderCounts,
 		"today_orders":  todayOrders,
 		"today_revenue": todayRevenue,
+		"total_revenue": totalRevenue,
 		"last_sync":     lastSync,
 	})
 }
@@ -191,7 +269,12 @@ func (h *AdminHandler) GetAdminProducts(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	products, total, err := h.productRepo.GetAllForAdmin(ctx, limit, offset)
+	search := r.URL.Query().Get("search")
+	category := r.URL.Query().Get("category")
+	typeStr := r.URL.Query().Get("type")
+	status := r.URL.Query().Get("status")
+
+	products, total, err := h.productRepo.GetAllForAdmin(ctx, limit, offset, search, category, typeStr, status)
 	if err != nil {
 		InternalError(w, "Gagal mengambil data produk")
 		return
@@ -202,6 +285,28 @@ func (h *AdminHandler) GetAdminProducts(w http.ResponseWriter, r *http.Request) 
 		"total":    total,
 		"limit":    limit,
 		"offset":   offset,
+	})
+}
+
+// GetProductFilters retrieves unique categories and types for filtering
+func (h *AdminHandler) GetProductFilters(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	categories, err := h.productRepo.GetCategories(ctx)
+	if err != nil {
+		log.Printf("Failed to get categories: %v", err)
+		categories = []string{}
+	}
+
+	types, err := h.productRepo.GetTypes(ctx)
+	if err != nil {
+		log.Printf("Failed to get types: %v", err)
+		types = []string{}
+	}
+
+	Success(w, "", map[string]interface{}{
+		"categories": categories,
+		"types":      types,
 	})
 }
 
@@ -230,6 +335,9 @@ type UpdateProductRequest struct {
 	IsBestSeller  *bool    `json:"is_best_seller,omitempty"`
 	MarkupPercent *float64 `json:"markup_percent,omitempty"`
 	DiscountPrice *float64 `json:"discount_price,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	ImageURL      *string  `json:"image_url,omitempty"`
+	Description   *string  `json:"description,omitempty"`
 }
 
 // UpdateAdminProduct handles PUT /api/v1/admin/products/{sku}
@@ -248,7 +356,7 @@ func (h *AdminHandler) UpdateAdminProduct(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.productRepo.UpdateCustomFields(ctx, sku, req.DisplayName, req.IsBestSeller, req.MarkupPercent, req.DiscountPrice); err != nil {
+	if err := h.productRepo.UpdateCustomFields(ctx, sku, req.DisplayName, req.IsBestSeller, req.MarkupPercent, req.DiscountPrice, req.Tags, req.ImageURL, req.Description); err != nil {
 		if err.Error() == "product not found" {
 			NotFound(w, "Produk tidak ditemukan")
 			return

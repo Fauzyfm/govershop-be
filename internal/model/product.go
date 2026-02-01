@@ -13,8 +13,8 @@ type Product struct {
 	Brand               string    `json:"brand" db:"brand"`
 	Type                string    `json:"type" db:"type"`
 	SellerName          string    `json:"seller_name,omitempty" db:"seller_name"`
-	BuyPrice            float64   `json:"-" db:"buy_price"`                             // Hidden from FE
-	MarkupPercent       float64   `json:"-" db:"markup_percent"`                        // Hidden from FE
+	BuyPrice            float64   `json:"buy_price" db:"buy_price"`                     // Visible to Admin
+	MarkupPercent       float64   `json:"markup_percent" db:"markup_percent"`           // Visible to Admin
 	SellingPrice        float64   `json:"selling_price" db:"selling_price"`             // Displayed to FE
 	DiscountPrice       *float64  `json:"discount_price,omitempty" db:"discount_price"` // Promo price
 	IsAvailable         bool      `json:"is_available" db:"is_available"`

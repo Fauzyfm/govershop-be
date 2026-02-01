@@ -146,8 +146,86 @@ func (r *OrderRepository) UpdateDigiflazzResponse(ctx context.Context, id string
 	return nil
 }
 
-// GetAll retrieves all orders (for admin)
-func (r *OrderRepository) GetAll(ctx context.Context, limit, offset int) ([]model.Order, error) {
+// GetTotalRevenue calculate total revenue from successful orders
+func (r *OrderRepository) GetTotalRevenue(ctx context.Context) (float64, error) {
+	query := `
+		SELECT COALESCE(SUM(selling_price), 0)
+		FROM orders
+		WHERE status IN ('success', 'processing', 'paid')
+	`
+	var total float64
+	err := r.db.QueryRow(ctx, query).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get total revenue: %w", err)
+	}
+	return total, nil
+}
+
+// GetAll retrieves all orders with optional filtering (for admin)
+func (r *OrderRepository) GetAll(ctx context.Context, limit, offset int, search, status string) ([]model.Order, int, error) {
+	baseQuery := `
+		FROM orders
+		WHERE 1=1
+	`
+	var args []interface{}
+	argIdx := 1
+
+	if status != "" && status != "all" {
+		baseQuery += fmt.Sprintf(" AND status = $%d", argIdx)
+		args = append(args, status)
+		argIdx++
+	}
+
+	if search != "" {
+		baseQuery += fmt.Sprintf(" AND (ref_id ILIKE $%d OR customer_no ILIKE $%d OR product_name ILIKE $%d OR serial_number ILIKE $%d OR customer_email ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx)
+		searchParam := "%" + search + "%"
+		args = append(args, searchParam, searchParam, searchParam, searchParam, searchParam)
+		argIdx++ // searchParam uses same index? No, pgx uses $1, $2. Actually reuse index?
+		// Postgres positional args must be unique. Let's simplify.
+		// Actually, standard way is $1, $2... so I need to increment properly or use named args (not supported by std lib directly simply).
+		// Re-write query construction carefully.
+	}
+
+	// Re-construct query builder logic safer
+	return r.getAllInternal(ctx, limit, offset, search, status)
+}
+
+func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int, search, status string) ([]model.Order, int, error) {
+	var conditions []string
+	var args []interface{}
+	argCounter := 1
+
+	if status != "" && status != "all" {
+		conditions = append(conditions, fmt.Sprintf("status = $%d", argCounter))
+		args = append(args, status)
+		argCounter++
+	}
+
+	if search != "" {
+		// PostgreSQL is case insensitive with ILIKE
+		searchCondition := fmt.Sprintf("(ref_id ILIKE $%d OR customer_no ILIKE $%d OR product_name ILIKE $%d OR serial_number ILIKE $%d OR customer_email ILIKE $%d)", argCounter, argCounter, argCounter, argCounter, argCounter)
+		conditions = append(conditions, searchCondition)
+		args = append(args, "%"+search+"%")
+		argCounter++
+	}
+
+	whereStmt := ""
+	if len(conditions) > 0 {
+		whereStmt = " WHERE " + conditions[0]
+		for i := 1; i < len(conditions); i++ {
+			whereStmt += " AND " + conditions[i]
+		}
+	}
+
+	// Count Total
+	var total int
+	countQuery := "SELECT COUNT(*) FROM orders" + whereStmt
+	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count: %w", err)
+	}
+
+	// Get Data
 	query := `
 		SELECT id, ref_id, buyer_sku_code, product_name, customer_no,
 		       buy_price, selling_price, status,
@@ -155,13 +233,13 @@ func (r *OrderRepository) GetAll(ctx context.Context, limit, offset int) ([]mode
 		       COALESCE(customer_email, ''), COALESCE(customer_phone, ''), COALESCE(customer_name, ''),
 		       created_at, updated_at, completed_at
 		FROM orders
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2
-	`
+	` + whereStmt + fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
 
-	rows, err := r.db.Query(ctx, query, limit, offset)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query orders: %w", err)
+		return nil, 0, fmt.Errorf("failed to query orders: %w", err)
 	}
 	defer rows.Close()
 
@@ -176,12 +254,12 @@ func (r *OrderRepository) GetAll(ctx context.Context, limit, offset int) ([]mode
 			&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan order: %w", err)
+			return nil, 0, fmt.Errorf("failed to scan order: %w", err)
 		}
 		orders = append(orders, o)
 	}
 
-	return orders, nil
+	return orders, total, nil
 }
 
 // GetByCustomerPhone retrieves orders by customer phone

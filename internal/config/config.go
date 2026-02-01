@@ -32,7 +32,13 @@ type Config struct {
 	DefaultMarkupPercent float64
 
 	// Sync
+	// Sync
 	ProductSyncInterval int // in minutes
+
+	// Admin Auth
+	AdminUsername string
+	AdminPassword string
+	JWTSecret     string
 }
 
 // Global config instance
@@ -69,6 +75,11 @@ func Load() *Config {
 
 		// Sync
 		ProductSyncInterval: getEnvInt("PRODUCT_SYNC_INTERVAL", 30),
+
+		// Admin Auth
+		AdminUsername: getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword: getEnv("ADMIN_PASSWORD", "admin123"),
+		JWTSecret:     getEnv("JWT_SECRET", "superdupersecretjwtkey"),
 	}
 
 	AppConfig = config

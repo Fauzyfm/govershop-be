@@ -43,11 +43,15 @@ func main() {
 	syncLogRepo := repository.NewSyncLogRepository(db)
 
 	// Initialize handlers
+	// Initialize handlers
 	productHandler := handler.NewProductHandler(productRepo)
 	orderHandler := handler.NewOrderHandler(orderRepo, paymentRepo, productRepo, digiflazzSvc, pakasirSvc)
 	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, digiflazzSvc)
 	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo)
 	validationHandler := handler.NewValidationHandler(cfg, productRepo, digiflazzSvc)
+
+	// Initialize middleware
+	authMiddleware := middleware.NewAuthMiddleware(cfg)
 
 	// Setup router
 	mux := http.NewServeMux()
@@ -97,6 +101,9 @@ func main() {
 	// Payment methods
 	mux.HandleFunc("GET /api/v1/payment-methods", orderHandler.GetPaymentMethods)
 
+	// Admin Auth (Public)
+	mux.HandleFunc("POST /api/v1/admin/login", adminHandler.Login)
+
 	// ==========================================
 	// WEBHOOK ROUTES
 	// ==========================================
@@ -104,23 +111,24 @@ func main() {
 	mux.HandleFunc("POST /api/v1/webhook/digiflazz", webhookHandler.HandleDigiflazzWebhook)
 
 	// ==========================================
-	// ADMIN ROUTES (TODO: Add auth middleware)
+	// ADMIN ROUTES (Protected with Auth Middleware)
 	// ==========================================
-	mux.HandleFunc("GET /api/v1/admin/balance", adminHandler.GetBalance)
-	mux.HandleFunc("GET /api/v1/admin/dashboard", adminHandler.GetDashboard)
-	mux.HandleFunc("GET /api/v1/admin/orders", adminHandler.GetOrders)
-	mux.HandleFunc("POST /api/v1/admin/sync/products", adminHandler.SyncProducts)
+	mux.HandleFunc("GET /api/v1/admin/balance", authMiddleware.AdminAuth(adminHandler.GetBalance))
+	mux.HandleFunc("GET /api/v1/admin/dashboard", authMiddleware.AdminAuth(adminHandler.GetDashboard))
+	mux.HandleFunc("GET /api/v1/admin/orders", authMiddleware.AdminAuth(adminHandler.GetOrders))
+	mux.HandleFunc("POST /api/v1/admin/sync/products", authMiddleware.AdminAuth(adminHandler.SyncProducts))
 
 	// Admin Product CRUD
-	mux.HandleFunc("GET /api/v1/admin/products", adminHandler.GetAdminProducts)
-	mux.HandleFunc("GET /api/v1/admin/products/tags", adminHandler.GetAllTags)
-	mux.HandleFunc("GET /api/v1/admin/products/best-sellers", adminHandler.GetBestSellers)
-	mux.HandleFunc("GET /api/v1/admin/products/{sku}", adminHandler.GetAdminProduct)
-	mux.HandleFunc("PUT /api/v1/admin/products/{sku}", adminHandler.UpdateAdminProduct)
-	mux.HandleFunc("PUT /api/v1/admin/products/{sku}/image", adminHandler.UpdateProductImage)
-	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/image", adminHandler.DeleteProductImage)
-	mux.HandleFunc("POST /api/v1/admin/products/{sku}/tags", adminHandler.AddProductTag)
-	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/tags/{tag}", adminHandler.RemoveProductTag)
+	mux.HandleFunc("GET /api/v1/admin/products", authMiddleware.AdminAuth(adminHandler.GetAdminProducts))
+	mux.HandleFunc("GET /api/v1/admin/products/filters", authMiddleware.AdminAuth(adminHandler.GetProductFilters))
+	mux.HandleFunc("GET /api/v1/admin/products/tags", authMiddleware.AdminAuth(adminHandler.GetAllTags))
+	mux.HandleFunc("GET /api/v1/admin/products/best-sellers", authMiddleware.AdminAuth(adminHandler.GetBestSellers))
+	mux.HandleFunc("GET /api/v1/admin/products/{sku}", authMiddleware.AdminAuth(adminHandler.GetAdminProduct))
+	mux.HandleFunc("PUT /api/v1/admin/products/{sku}", authMiddleware.AdminAuth(adminHandler.UpdateAdminProduct))
+	mux.HandleFunc("PUT /api/v1/admin/products/{sku}/image", authMiddleware.AdminAuth(adminHandler.UpdateProductImage))
+	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/image", authMiddleware.AdminAuth(adminHandler.DeleteProductImage))
+	mux.HandleFunc("POST /api/v1/admin/products/{sku}/tags", authMiddleware.AdminAuth(adminHandler.AddProductTag))
+	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/tags/{tag}", authMiddleware.AdminAuth(adminHandler.RemoveProductTag))
 
 	// Apply middleware to API routes
 	var apiHandler http.Handler = mux

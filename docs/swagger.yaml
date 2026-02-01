@@ -1127,10 +1127,25 @@ paths:
                   nullable: true
                   description: Harga promo (null untuk hapus promo)
                   example: 5000
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  description: Tags untuk grouping
+                  example: ["diamond", "promo"]
+                image_url:
+                  type: string
+                  description: URL gambar custom
+                  example: "https://example.com/image.png"
+                description:
+                  type: string
+                  description: Deskripsi custom
+                  example: "Promo terbatas!"
             example:
               display_name: "Mobile Legends 5 Diamond"
               is_best_seller: true
               markup_percent: 5.0
+              tags: ["diamond"]
       responses:
         '200':
           description: Produk berhasil diupdate

@@ -188,6 +188,32 @@ func (r *ProductRepository) GetCategories(ctx context.Context) ([]string, error)
 	return categories, nil
 }
 
+// GetTypes retrieves list of available product types
+func (r *ProductRepository) GetTypes(ctx context.Context) ([]string, error) {
+	query := `
+		SELECT DISTINCT type FROM products 
+		WHERE type IS NOT NULL AND type != ''
+		ORDER BY type
+	`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query types: %w", err)
+	}
+	defer rows.Close()
+
+	var types []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, fmt.Errorf("failed to scan type: %w", err)
+		}
+		types = append(types, t)
+	}
+
+	return types, nil
+}
+
 // GetBrands retrieves list of available brands (optionally filtered by category)
 func (r *ProductRepository) GetBrands(ctx context.Context, category string) ([]model.Brand, error) {
 	var query string
@@ -260,7 +286,7 @@ func (r *ProductRepository) UpsertProduct(ctx context.Context, dfProduct model.D
 			type = EXCLUDED.type,
 			seller_name = EXCLUDED.seller_name,
 			buy_price = EXCLUDED.buy_price,
-			selling_price = products.buy_price + (products.buy_price * products.markup_percent / 100),
+			selling_price = CEIL(products.buy_price + (products.buy_price * products.markup_percent / 100)),
 			is_available = EXCLUDED.is_available,
 			buyer_product_status = EXCLUDED.buyer_product_status,
 			seller_product_status = EXCLUDED.seller_product_status,
@@ -311,12 +337,43 @@ func (r *ProductRepository) MarkUnavailable(ctx context.Context, skuCodes []stri
 // ADMIN CRUD METHODS
 // ==========================================
 
-// GetAllForAdmin retrieves all products for admin (including unavailable)
-func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset int) ([]model.Product, int, error) {
+// GetAllForAdmin retrieves all products for admin (including unavailable) with filtering
+func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset int, search, category, typeStr, status string) ([]model.Product, int, error) {
+	// Build WHERE clause
+	whereClause := " WHERE 1=1"
+	var args []interface{}
+	argCounter := 1
+
+	if search != "" {
+		whereClause += fmt.Sprintf(" AND (product_name ILIKE $%d OR buyer_sku_code ILIKE $%d OR brand ILIKE $%d)", argCounter, argCounter, argCounter)
+		args = append(args, "%"+search+"%")
+		argCounter++
+	}
+
+	if category != "" && category != "all" {
+		whereClause += fmt.Sprintf(" AND category = $%d", argCounter)
+		args = append(args, category)
+		argCounter++
+	}
+
+	if typeStr != "" && typeStr != "all" {
+		whereClause += fmt.Sprintf(" AND type = $%d", argCounter)
+		args = append(args, typeStr)
+		argCounter++
+	}
+
+	if status != "" && status != "all" {
+		if status == "active" {
+			whereClause += " AND buyer_product_status = true"
+		} else {
+			whereClause += " AND buyer_product_status = false"
+		}
+	}
+
 	// Get total count
 	var total int
-	countQuery := `SELECT COUNT(*) FROM products`
-	if err := r.db.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+	countQuery := "SELECT COUNT(*) FROM products" + whereClause
+	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count products: %w", err)
 	}
 
@@ -325,13 +382,13 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 		       buy_price, markup_percent, selling_price, discount_price, is_available,
 		       buyer_product_status, seller_product_status, unlimited_stock, stock,
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
-		       display_name, is_best_seller, tags
+		       display_name, is_best_seller, tags, image_url
 		FROM products
-		ORDER BY category, brand, product_name
-		LIMIT $1 OFFSET $2
-	`
+	` + whereClause + fmt.Sprintf(" ORDER BY category, brand, product_name LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
 
-	rows, err := r.db.Query(ctx, query, limit, offset)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query products: %w", err)
 	}
@@ -345,7 +402,7 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 			&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
 			&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
 			&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
-			&p.DisplayName, &p.IsBestSeller, &p.Tags,
+			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan product: %w", err)
@@ -357,19 +414,27 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 }
 
 // UpdateCustomFields updates admin-editable fields for a product
-func (r *ProductRepository) UpdateCustomFields(ctx context.Context, sku string, displayName *string, isBestSeller *bool, markupPercent *float64, discountPrice *float64) error {
+func (r *ProductRepository) UpdateCustomFields(ctx context.Context, sku string, displayName *string, isBestSeller *bool, markupPercent *float64, discountPrice *float64, tags []string, imageURL *string, description *string) error {
 	query := `
 		UPDATE products SET
 			display_name = COALESCE($2, display_name),
 			is_best_seller = COALESCE($3, is_best_seller),
 			markup_percent = COALESCE($4, markup_percent),
 			discount_price = COALESCE($5, discount_price),
-			selling_price = buy_price + (buy_price * COALESCE($4, markup_percent) / 100),
+			tags = CASE WHEN $6::text[] IS NULL THEN tags ELSE $6::text[] END,
+			image_url = COALESCE($7, image_url),
+			description = COALESCE($8, description),
+			selling_price = CEIL(buy_price + (buy_price * COALESCE($4, markup_percent) / 100)),
 			updated_at = NOW()
 		WHERE buyer_sku_code = $1
 	`
 
-	result, err := r.db.Exec(ctx, query, sku, displayName, isBestSeller, markupPercent, discountPrice)
+	// Handle empty slice for tags - pass as is, SQL handles logic
+	// But in Go driver, empty slice might be passed as empty array. If we want to skip update if nil, we need logic.
+	// Actually, the requirement is to update if provided.
+	// Postgres driver handles []string correctly as text[].
+
+	result, err := r.db.Exec(ctx, query, sku, displayName, isBestSeller, markupPercent, discountPrice, tags, imageURL, description)
 	if err != nil {
 		return fmt.Errorf("failed to update product: %w", err)
 	}

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 )
 
@@ -79,22 +80,53 @@ func (h *ValidationHandler) CalculatePrice(w http.ResponseWriter, r *http.Reques
 	// Flat admin fee as per requirement
 	var adminFee float64 = 10
 
+	// Calculate Payment Fee
+	var paymentFee float64 = 0
+	method := req.PaymentMethod
+
+	switch {
+	case method == "qris" || method == "shopeepay_qris" || method == "dana_qris":
+		// QRIS: 0.7% + 310
+		paymentFee = (sellingPrice * 0.007) + 310
+	case method == "paypal":
+		// Paypal: 1%
+		paymentFee = sellingPrice * 0.01
+	case method == "artha_va" || method == "sampoerna_va":
+		// Specific VAs: 2000
+		paymentFee = 2000
+	case method == "bri_va" || method == "bni_va" || method == "mandiri_va" ||
+		method == "cimb_va" || method == "danamon_va" || method == "permata_va" ||
+		method == "maybank_va" || method == "bnc_va" || method == "atm_bersama_va":
+		// Bank VAs: 3500
+		paymentFee = 3500
+	default:
+		// Default fallback for VAs if not matched but contains "va"
+		if len(method) > 3 && method[len(method)-3:] == "_va" {
+			paymentFee = 3500
+		}
+	}
+
+	// Round up payment fee to nearest integer if needed, or keeping float for precision
+	// Usually fees are integers in IDR, but QRIS % might result in decimals.
+	// Let's use math.Ceil for paymentFee to be safe
+	paymentFee = math.Ceil(paymentFee)
+
 	// Calculate total
-	// Payment fee is handled by payment gateway (Pakasir) automatically
-	totalPrice := sellingPrice + adminFee
+	totalPrice := sellingPrice + adminFee + paymentFee
 
 	// Build breakdown
 	breakdown := PriceBreakdown{
 		Items: []PriceItem{
 			{Label: product.ProductName, Amount: sellingPrice},
 			{Label: "Biaya Admin", Amount: adminFee},
+			{Label: "Biaya Transaksi", Amount: paymentFee},
 		},
 	}
 
 	Success(w, "Kalkulasi harga berhasil", CalculatePriceResponse{
 		ProductPrice:       sellingPrice,
 		AdminFee:           adminFee,
-		PaymentFee:         0, // Fee handled by gateway
+		PaymentFee:         paymentFee,
 		TotalPrice:         totalPrice,
 		ProductName:        product.ProductName,
 		PaymentMethodLabel: req.PaymentMethod,
