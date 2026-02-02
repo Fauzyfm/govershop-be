@@ -13,7 +13,8 @@ const (
 	OrderStatusPaid           OrderStatus = "paid"            // Payment confirmed by Pakasir
 	OrderStatusProcessing     OrderStatus = "processing"      // Topup in progress at Digiflazz
 	OrderStatusSuccess        OrderStatus = "success"         // Topup completed successfully
-	OrderStatusFailed         OrderStatus = "failed"          // Topup failed
+	OrderStatusFailed         OrderStatus = "failed"          // Topup failed (Digiflazz error)
+	OrderStatusExpired        OrderStatus = "expired"         // Payment expired (timeout)
 	OrderStatusCancelled      OrderStatus = "cancelled"       // Cancelled by user
 	OrderStatusRefunded       OrderStatus = "refunded"        // Payment refunded
 )
@@ -74,6 +75,7 @@ func (o *Order) GetStatusLabel() string {
 		OrderStatusProcessing:     "Sedang Diproses",
 		OrderStatusSuccess:        "Berhasil",
 		OrderStatusFailed:         "Gagal",
+		OrderStatusExpired:        "Kadaluwarsa",
 		OrderStatusCancelled:      "Dibatalkan",
 		OrderStatusRefunded:       "Dana Dikembalikan",
 	}

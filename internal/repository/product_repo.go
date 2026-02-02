@@ -414,27 +414,45 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 }
 
 // UpdateCustomFields updates admin-editable fields for a product
+// When a pointer is nil, the field is not updated. When a pointer has an empty value, the field is set to NULL.
 func (r *ProductRepository) UpdateCustomFields(ctx context.Context, sku string, displayName *string, isBestSeller *bool, markupPercent *float64, discountPrice *float64, tags []string, imageURL *string, description *string) error {
+	// Build dynamic update query to allow clearing fields
 	query := `
 		UPDATE products SET
-			display_name = COALESCE($2, display_name),
+			display_name = $2,
 			is_best_seller = COALESCE($3, is_best_seller),
 			markup_percent = COALESCE($4, markup_percent),
-			discount_price = COALESCE($5, discount_price),
+			discount_price = $5,
 			tags = CASE WHEN $6::text[] IS NULL THEN tags ELSE $6::text[] END,
-			image_url = COALESCE($7, image_url),
-			description = COALESCE($8, description),
+			image_url = $7,
+			description = $8,
 			selling_price = CEIL(buy_price + (buy_price * COALESCE($4, markup_percent) / 100)),
 			updated_at = NOW()
 		WHERE buyer_sku_code = $1
 	`
 
-	// Handle empty slice for tags - pass as is, SQL handles logic
-	// But in Go driver, empty slice might be passed as empty array. If we want to skip update if nil, we need logic.
-	// Actually, the requirement is to update if provided.
-	// Postgres driver handles []string correctly as text[].
+	// Handle empty string as NULL for clearing
+	var displayNameVal interface{} = displayName
+	if displayName != nil && *displayName == "" {
+		displayNameVal = nil // Clear to NULL
+	}
 
-	result, err := r.db.Exec(ctx, query, sku, displayName, isBestSeller, markupPercent, discountPrice, tags, imageURL, description)
+	var imageURLVal interface{} = imageURL
+	if imageURL != nil && *imageURL == "" {
+		imageURLVal = nil // Clear to NULL
+	}
+
+	var descriptionVal interface{} = description
+	if description != nil && *description == "" {
+		descriptionVal = nil // Clear to NULL
+	}
+
+	var discountPriceVal interface{} = discountPrice
+	if discountPrice != nil && *discountPrice == 0 {
+		discountPriceVal = nil // Clear to NULL (0 means no discount)
+	}
+
+	result, err := r.db.Exec(ctx, query, sku, displayNameVal, isBestSeller, markupPercent, discountPriceVal, tags, imageURLVal, descriptionVal)
 	if err != nil {
 		return fmt.Errorf("failed to update product: %w", err)
 	}

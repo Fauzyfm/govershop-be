@@ -692,7 +692,7 @@ paths:
                         format: uuid
                       status:
                         type: string
-                        enum: [pending, waiting_payment, paid, processing, success, failed, cancelled, refunded]
+                        enum: [pending, waiting_payment, paid, processing, success, failed, expired, cancelled, refunded]
                         example: success
                       status_label:
                         type: string
@@ -823,7 +823,31 @@ paths:
       tags:
         - Admin
       summary: Daftar Semua Order
-      description: Mengambil daftar semua order (untuk admin)
+      description: |
+        Mengambil daftar semua order (untuk admin).
+        Mendukung pencarian berdasarkan ref_id, customer_no, email, phone, product_name.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: search
+          in: query
+          description: "Search by ref_id, customer_no, email, phone, product_name, serial_number"
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by order status
+          schema:
+            type: string
+            enum: [all, pending, processing, success, failed, expired]
       responses:
         '200':
           description: Daftar order berhasil diambil
@@ -835,6 +859,79 @@ paths:
                   success:
                     type: boolean
                     example: true
+                  data:
+                    type: object
+                    properties:
+                      orders:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AdminOrderResponse'
+                      total:
+                        type: integer
+                        example: 100
+                      limit:
+                        type: integer
+                      offset:
+                        type: integer
+
+  /api/v1/admin/orders/{id}/check-status:
+    post:
+      tags:
+        - Admin
+      summary: Check & Update Order Status
+      description: |
+        Mengecek status order dan memperbarui jika diperlukan.
+        Jika order sudah expired, akan otomatis:
+        - Cancel transaksi di Pakasir
+        - Update order status ke `expired`
+        - Update payment status ke `expired`
+      parameters:
+        - name: id
+          in: path
+          description: UUID Order ID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Status berhasil dicek
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Order telah kadaluwarsa dan dibatalkan"
+                  data:
+                    type: object
+                    properties:
+                      order_id:
+                        type: string
+                        format: uuid
+                      ref_id:
+                        type: string
+                      status:
+                        type: string
+                        enum: [pending, waiting_payment, paid, processing, success, failed, expired, cancelled]
+                      changed:
+                        type: boolean
+                        description: "True jika status berubah"
+                        example: true
+                      reason:
+                        type: string
+                        description: "Alasan perubahan (expired, pakasir_expired)"
+                        example: expired
+        '404':
+          description: Order tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/admin/products/{sku}/image:
     put:
@@ -1508,7 +1605,7 @@ components:
           example: 6000
         status:
           type: string
-          enum: [pending, waiting_payment, paid, processing, success, failed, cancelled, refunded]
+          enum: [pending, waiting_payment, paid, processing, success, failed, expired, cancelled, refunded]
           example: pending
         status_label:
           type: string
@@ -1531,6 +1628,64 @@ components:
           example: "2024-01-26T12:05:00Z"
         payment:
           $ref: '#/components/schemas/PaymentResponse'
+
+    AdminOrderResponse:
+      type: object
+      description: "Order response untuk Admin dengan payment_status dan buyer_sku_code"
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        ref_id:
+          type: string
+          example: GVS-1234567890-ABCDEF
+        buyer_sku_code:
+          type: string
+          description: "SKU produk"
+          example: ml86
+        product_name:
+          type: string
+          example: "Mobile Legends 86 Diamonds"
+        customer_no:
+          type: string
+          example: "123456789012"
+        customer_email:
+          type: string
+          example: "customer@email.com"
+        customer_phone:
+          type: string
+          example: "081234567890"
+        price:
+          type: number
+          example: 25000
+        status:
+          type: string
+          description: "Order status"
+          enum: [pending, waiting_payment, paid, processing, success, failed, expired, cancelled]
+          example: success
+        status_label:
+          type: string
+          description: "Human-readable status dalam Bahasa Indonesia"
+          example: Berhasil
+        payment_status:
+          type: string
+          description: "Payment status dari tabel payments (null jika belum bayar)"
+          enum: [pending, completed, expired, cancelled]
+          example: completed
+        serial_number:
+          type: string
+          description: "Serial number dari Digiflazz"
+          example: "987654321"
+        message:
+          type: string
+          example: "Transaksi berhasil"
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
 
     PaymentResponse:
       type: object

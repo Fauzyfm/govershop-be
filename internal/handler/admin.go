@@ -11,6 +11,7 @@ import (
 	"govershop-api/internal/model"
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
+	"govershop-api/internal/service/pakasir"
 
 	"time"
 
@@ -61,6 +62,8 @@ type AdminHandler struct {
 	productRepo  *repository.ProductRepository
 	orderRepo    *repository.OrderRepository
 	syncLogRepo  *repository.SyncLogRepository
+	paymentRepo  *repository.PaymentRepository
+	pakasirSvc   *pakasir.Service
 }
 
 // NewAdminHandler creates a new AdminHandler
@@ -70,6 +73,8 @@ func NewAdminHandler(
 	productRepo *repository.ProductRepository,
 	orderRepo *repository.OrderRepository,
 	syncLogRepo *repository.SyncLogRepository,
+	paymentRepo *repository.PaymentRepository,
+	pakasirSvc *pakasir.Service,
 ) *AdminHandler {
 	return &AdminHandler{
 		config:       cfg,
@@ -77,6 +82,8 @@ func NewAdminHandler(
 		productRepo:  productRepo,
 		orderRepo:    orderRepo,
 		syncLogRepo:  syncLogRepo,
+		paymentRepo:  paymentRepo,
+		pakasirSvc:   pakasirSvc,
 	}
 }
 
@@ -173,8 +180,56 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enrich orders with payment status
+	type AdminOrderResponse struct {
+		ID              string  `json:"id"`
+		RefID           string  `json:"ref_id"`
+		BuyerSKUCode    string  `json:"buyer_sku_code"`
+		ProductName     string  `json:"product_name"`
+		CustomerNo      string  `json:"customer_no"`
+		CustomerEmail   string  `json:"customer_email,omitempty"`
+		CustomerPhone   string  `json:"customer_phone,omitempty"`
+		SellingPrice    float64 `json:"selling_price"`
+		Status          string  `json:"status"`
+		StatusLabel     string  `json:"status_label"`
+		PaymentStatus   string  `json:"payment_status"`
+		DigiflazzStatus string  `json:"digiflazz_status,omitempty"`
+		SerialNumber    string  `json:"serial_number,omitempty"`
+		Message         string  `json:"message,omitempty"`
+		CreatedAt       string  `json:"created_at"`
+	}
+
+	var enrichedOrders []AdminOrderResponse
+	for _, order := range orders {
+		resp := AdminOrderResponse{
+			ID:              order.ID,
+			RefID:           order.RefID,
+			BuyerSKUCode:    order.BuyerSKUCode,
+			ProductName:     order.ProductName,
+			CustomerNo:      order.CustomerNo,
+			CustomerEmail:   order.CustomerEmail,
+			CustomerPhone:   order.CustomerPhone,
+			SellingPrice:    order.SellingPrice,
+			Status:          string(order.Status),
+			StatusLabel:     order.GetStatusLabel(),
+			DigiflazzStatus: order.DigiflazzStatus,
+			SerialNumber:    order.SerialNumber,
+			Message:         order.DigiflazzMsg,
+			CreatedAt:       order.CreatedAt.Format(time.RFC3339),
+		}
+
+		// Get payment status if exists
+		if payment, err := h.paymentRepo.GetByOrderID(ctx, order.ID); err == nil && payment != nil {
+			resp.PaymentStatus = string(payment.Status)
+		} else {
+			resp.PaymentStatus = "-"
+		}
+
+		enrichedOrders = append(enrichedOrders, resp)
+	}
+
 	Success(w, "", map[string]interface{}{
-		"orders": orders,
+		"orders": enrichedOrders,
 		"total":  total,
 		"limit":  limit,
 		"offset": offset,
@@ -513,4 +568,119 @@ func parseInt(s string) (int, error) {
 	var i int
 	_, err := fmt.Sscanf(s, "%d", &i)
 	return i, err
+}
+
+// CheckOrderStatus handles POST /api/v1/admin/orders/{id}/check-status
+// Checks if order is expired and cancels it if necessary
+func (h *AdminHandler) CheckOrderStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	orderID := r.PathValue("id")
+
+	if orderID == "" {
+		BadRequest(w, "Order ID tidak valid")
+		return
+	}
+
+	order, err := h.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		NotFound(w, "Order tidak ditemukan")
+		return
+	}
+
+	// Get payment info
+	payment, err := h.paymentRepo.GetByOrderID(ctx, orderID)
+	if err != nil {
+		NotFound(w, "Payment tidak ditemukan")
+		return
+	}
+
+	// Check if already final status
+	if order.Status == model.OrderStatusSuccess || order.Status == model.OrderStatusFailed || order.Status == model.OrderStatusCancelled {
+		Success(w, "Order sudah dalam status final", map[string]interface{}{
+			"order_id": order.ID,
+			"ref_id":   order.RefID,
+			"status":   order.Status,
+			"changed":  false,
+		})
+		return
+	}
+
+	// Check if expired
+	if !payment.ExpiredAt.IsZero() && time.Now().After(payment.ExpiredAt) {
+		// Order is expired, cancel via Pakasir
+		log.Printf("[Admin] Order %s is expired, cancelling via Pakasir", order.RefID)
+
+		// Cancel in Pakasir
+		if err := h.pakasirSvc.CancelTransaction(order.RefID, order.SellingPrice); err != nil {
+			log.Printf("[Admin] Failed to cancel Pakasir transaction: %v", err)
+			// Continue anyway, update local status
+		}
+
+		// Update payment status
+		if err := h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusExpired); err != nil {
+			log.Printf("[Admin] Failed to update payment status: %v", err)
+		}
+
+		// Update order status to expired
+		if err := h.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusExpired); err != nil {
+			InternalError(w, "Gagal mengupdate status order")
+			return
+		}
+
+		Success(w, "Order telah kadaluwarsa dan dibatalkan", map[string]interface{}{
+			"order_id": order.ID,
+			"ref_id":   order.RefID,
+			"status":   model.OrderStatusExpired,
+			"changed":  true,
+			"reason":   "expired",
+		})
+		return
+	}
+
+	// Check Pakasir transaction status
+	detail, err := h.pakasirSvc.GetTransactionDetail(order.RefID, order.SellingPrice)
+	if err != nil {
+		log.Printf("[Admin] Failed to get Pakasir transaction detail: %v", err)
+		// Return current status if Pakasir check fails
+		Success(w, "", map[string]interface{}{
+			"order_id": order.ID,
+			"ref_id":   order.RefID,
+			"status":   order.Status,
+			"changed":  false,
+			"message":  "Tidak dapat mengecek status Pakasir",
+		})
+		return
+	}
+
+	// If Pakasir says expired
+	if detail.Transaction.Status == "expired" {
+		// Update payment status
+		if err := h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusExpired); err != nil {
+			log.Printf("[Admin] Failed to update payment status: %v", err)
+		}
+
+		// Update order status to expired
+		if err := h.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusExpired); err != nil {
+			InternalError(w, "Gagal mengupdate status order")
+			return
+		}
+
+		Success(w, "Order telah kadaluwarsa (dari Pakasir)", map[string]interface{}{
+			"order_id": order.ID,
+			"ref_id":   order.RefID,
+			"status":   model.OrderStatusExpired,
+			"changed":  true,
+			"reason":   "pakasir_expired",
+		})
+		return
+	}
+
+	// No change needed
+	Success(w, "", map[string]interface{}{
+		"order_id":       order.ID,
+		"ref_id":         order.RefID,
+		"status":         order.Status,
+		"pakasir_status": detail.Transaction.Status,
+		"changed":        false,
+	})
 }

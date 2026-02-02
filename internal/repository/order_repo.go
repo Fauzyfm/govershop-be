@@ -209,7 +209,7 @@ func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int,
 
 	if search != "" {
 		// PostgreSQL is case insensitive with ILIKE
-		searchCondition := fmt.Sprintf("(ref_id ILIKE $%d OR customer_no ILIKE $%d OR product_name ILIKE $%d OR serial_number ILIKE $%d OR customer_email ILIKE $%d)", argCounter, argCounter, argCounter, argCounter, argCounter)
+		searchCondition := fmt.Sprintf("(ref_id ILIKE $%d OR customer_no ILIKE $%d OR product_name ILIKE $%d OR serial_number ILIKE $%d OR customer_email ILIKE $%d OR customer_phone ILIKE $%d)", argCounter, argCounter, argCounter, argCounter, argCounter, argCounter)
 		conditions = append(conditions, searchCondition)
 		args = append(args, "%"+search+"%")
 		argCounter++

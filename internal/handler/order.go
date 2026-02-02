@@ -261,6 +261,7 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 	// Build response
 	response := map[string]interface{}{
 		"order_id":      order.ID,
+		"ref_id":        order.RefID,
 		"status":        order.Status,
 		"status_label":  order.GetStatusLabel(),
 		"serial_number": order.SerialNumber,
