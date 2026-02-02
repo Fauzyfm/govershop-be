@@ -75,14 +75,16 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 
 	// Get check username product
 	checkProduct, err := h.productRepo.GetBySKU(ctx, checkUserSKU)
-	if err != nil {
-		// If check username product not found, return error
-		NotFound(w, fmt.Sprintf("Produk validasi untuk %s tidak ditemukan", req.Brand))
-		return
-	}
-
-	if !checkProduct.IsAvailable {
-		BadRequest(w, "Produk validasi sedang tidak tersedia")
+	if err != nil || !checkProduct.IsAvailable {
+		// If check username product not found or unavailable, return Success but with empty account name
+		// This triggers "Manual Validation" flow on frontend
+		Success(w, "Validasi manual", ValidateAccountResponse{
+			IsValid:     true,
+			AccountName: "", // Empty name indicates manual check warning needed
+			CustomerNo:  req.CustomerNo,
+			Brand:       req.Brand,
+			Message:     "Pastikan User ID sesuai. Kesalahan input diluar tanggung jawab kami.",
+		})
 		return
 	}
 
