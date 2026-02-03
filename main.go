@@ -100,6 +100,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/content/carousel", contentHandler.GetCarousel)
 	mux.HandleFunc("GET /api/v1/content/brands", contentHandler.GetBrandImages)
 	mux.HandleFunc("GET /api/v1/content/popup", contentHandler.GetPopup)
+	mux.HandleFunc("GET /api/v1/brands/{brand}", contentHandler.GetPublicBrandSetting)
 
 	// Validation endpoints
 	mux.HandleFunc("POST /api/v1/validate-account", validationHandler.ValidateAccount)
@@ -152,6 +153,10 @@ func main() {
 	mux.HandleFunc("POST /api/v1/admin/content", authMiddleware.AdminAuth(contentHandler.CreateContent))
 	mux.HandleFunc("PUT /api/v1/admin/content/{id}", authMiddleware.AdminAuth(contentHandler.UpdateContent))
 	mux.HandleFunc("DELETE /api/v1/admin/content/{id}", authMiddleware.AdminAuth(contentHandler.DeleteContent))
+
+	// Admin Brand Settings
+	mux.HandleFunc("GET /api/v1/admin/brands", authMiddleware.AdminAuth(contentHandler.GetBrandSettings))
+	mux.HandleFunc("PUT /api/v1/admin/brands/{brand}", authMiddleware.AdminAuth(contentHandler.UpdateBrandSetting))
 
 	// Apply middleware to API routes
 	var apiHandler http.Handler = mux

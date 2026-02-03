@@ -122,13 +122,23 @@ type PakasirWebhookPayload struct {
 }
 
 // GetAvailablePaymentMethods returns list of available payment methods
+// Based on Pakasir API documentation: https://pakasir.com/p/docs
 func GetAvailablePaymentMethods() []map[string]string {
 	return []map[string]string{
+		// QRIS
 		{"code": "qris", "name": "QRIS", "type": "qris"},
+		// Virtual Account - Bank Besar
 		{"code": "bni_va", "name": "BNI Virtual Account", "type": "va"},
 		{"code": "bri_va", "name": "BRI Virtual Account", "type": "va"},
 		{"code": "permata_va", "name": "Permata Virtual Account", "type": "va"},
 		{"code": "cimb_niaga_va", "name": "CIMB Niaga Virtual Account", "type": "va"},
-		{"code": "mandiri_va", "name": "Mandiri Virtual Account", "type": "va"},
+		{"code": "maybank_va", "name": "Maybank Virtual Account", "type": "va"},
+		// Virtual Account - Bank Lainnya
+		{"code": "bnc_va", "name": "BNC Virtual Account", "type": "va"},
+		{"code": "sampoerna_va", "name": "Bank Sampoerna Virtual Account", "type": "va"},
+		{"code": "artha_graha_va", "name": "Artha Graha Virtual Account", "type": "va"},
+		{"code": "atm_bersama_va", "name": "ATM Bersama Virtual Account", "type": "va"},
+		// PayPal
+		{"code": "paypal", "name": "PayPal", "type": "paypal"},
 	}
 }

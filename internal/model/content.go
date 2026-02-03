@@ -50,3 +50,33 @@ type PopupResponse struct {
 	Description *string `json:"description,omitempty"`
 	LinkURL     *string `json:"link_url,omitempty"`
 }
+
+// BrandSetting represents settings for a specific brand
+type BrandSetting struct {
+	BrandName      string      `json:"brand_name" db:"brand_name"`
+	Slug           string      `json:"slug" db:"slug"`
+	CustomImageURL string      `json:"custom_image_url" db:"custom_image_url"`
+	IsBestSeller   bool        `json:"is_best_seller" db:"is_best_seller"`
+	Status         string      `json:"status" db:"status"` // 'active', 'coming_soon', 'maintenance'
+	TopupSteps     []TopupStep `json:"topup_steps" db:"topup_steps"`
+	Description    string      `json:"description" db:"description"`
+	CreatedAt      time.Time   `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at" db:"updated_at"`
+}
+
+// TopupStep represents a single step in the topup guide
+type TopupStep struct {
+	Step  int    `json:"step"`
+	Title string `json:"title"`
+	Desc  string `json:"desc"`
+}
+
+// BrandPublicData represents public brand settings
+type BrandPublicData struct {
+	BrandName    string      `json:"brand_name"`
+	ImageURL     string      `json:"image_url"`
+	IsBestSeller bool        `json:"is_best_seller"`
+	Status       string      `json:"status"`
+	TopupSteps   []TopupStep `json:"topup_steps,omitempty"`
+	Description  string      `json:"description,omitempty"`
+}

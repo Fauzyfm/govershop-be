@@ -332,10 +332,11 @@ func (h *AdminHandler) GetAdminProducts(w http.ResponseWriter, r *http.Request) 
 
 	search := r.URL.Query().Get("search")
 	category := r.URL.Query().Get("category")
+	brand := r.URL.Query().Get("brand")
 	typeStr := r.URL.Query().Get("type")
 	status := r.URL.Query().Get("status")
 
-	products, total, err := h.productRepo.GetAllForAdmin(ctx, limit, offset, search, category, typeStr, status)
+	products, total, err := h.productRepo.GetAllForAdmin(ctx, limit, offset, search, category, brand, typeStr, status)
 	if err != nil {
 		InternalError(w, "Gagal mengambil data produk")
 		return
@@ -365,9 +366,16 @@ func (h *AdminHandler) GetProductFilters(w http.ResponseWriter, r *http.Request)
 		types = []string{}
 	}
 
+	brands, err := h.productRepo.GetAllBrands(ctx)
+	if err != nil {
+		log.Printf("Failed to get brands: %v", err)
+		brands = []string{}
+	}
+
 	Success(w, "", map[string]interface{}{
 		"categories": categories,
 		"types":      types,
+		"brands":     brands,
 	})
 }
 

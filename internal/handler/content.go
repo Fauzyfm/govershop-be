@@ -233,7 +233,7 @@ func (h *ContentHandler) GetBrandImages(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if images == nil {
-		images = make(map[string]string)
+		images = make(map[string]model.BrandPublicData)
 	}
 
 	Success(w, "", map[string]interface{}{
@@ -256,5 +256,105 @@ func (h *ContentHandler) GetPopup(w http.ResponseWriter, r *http.Request) {
 
 	Success(w, "", map[string]interface{}{
 		"popup": popup,
+	})
+}
+
+// GetBrandSettings handles GET /api/v1/admin/brands
+func (h *ContentHandler) GetBrandSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	items, err := h.contentRepo.GetAllBrandSettings(ctx)
+	if err != nil {
+		InternalError(w, "Gagal mengambil data branding")
+		return
+	}
+
+	if items == nil {
+		items = []model.BrandSetting{}
+	}
+
+	Success(w, "", map[string]interface{}{
+		"brands": items,
+	})
+}
+
+// UpdateBrandSettingRequest is the request body for updating brand settings
+type UpdateBrandSettingRequest struct {
+	BrandName      string            `json:"brand_name"`
+	Slug           string            `json:"slug"`
+	CustomImageURL string            `json:"custom_image_url"`
+	IsBestSeller   bool              `json:"is_best_seller"`
+	Status         string            `json:"status"` // 'active', 'coming_soon', 'maintenance'
+	TopupSteps     []model.TopupStep `json:"topup_steps"`
+	Description    string            `json:"description"`
+}
+
+// UpdateBrandSetting handles PUT /api/v1/admin/brands/{brand}
+func (h *ContentHandler) UpdateBrandSetting(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	brandName := r.PathValue("brand") // Assuming go 1.22+ router
+
+	if brandName == "" {
+		BadRequest(w, "Brand name tidak valid")
+		return
+	}
+
+	var req UpdateBrandSettingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		BadRequest(w, "Format request tidak valid")
+		return
+	}
+
+	// Ensure brand name from path is used
+	req.BrandName = brandName
+
+	setting := &model.BrandSetting{
+		BrandName:      req.BrandName,
+		Slug:           req.Slug,
+		CustomImageURL: req.CustomImageURL,
+		IsBestSeller:   req.IsBestSeller,
+		Status:         req.Status,
+		TopupSteps:     req.TopupSteps,
+		Description:    req.Description,
+	}
+
+	if err := h.contentRepo.UpsertBrandSetting(ctx, setting); err != nil {
+		InternalError(w, "Gagal update brand setting")
+		return
+	}
+
+	Success(w, "Brand setting berhasil diupdate", setting)
+}
+
+// GetPublicBrandSetting handles GET /api/v1/brands/{brand} (Public endpoint)
+func (h *ContentHandler) GetPublicBrandSetting(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	brandName := r.PathValue("brand")
+
+	if brandName == "" {
+		BadRequest(w, "Brand name tidak valid")
+		return
+	}
+
+	setting, err := h.contentRepo.GetBrandSetting(ctx, brandName)
+	if err != nil {
+		// Return empty data if not found
+		Success(w, "", map[string]interface{}{
+			"brand_name":     brandName,
+			"topup_steps":    []model.TopupStep{},
+			"description":    "",
+			"status":         "active",
+			"is_best_seller": false,
+		})
+		return
+	}
+
+	Success(w, "", map[string]interface{}{
+		"brand_name":     setting.BrandName,
+		"topup_steps":    setting.TopupSteps,
+		"description":    setting.Description,
+		"status":         setting.Status,
+		"is_best_seller": setting.IsBestSeller,
+		"image_url":      setting.CustomImageURL,
 	})
 }

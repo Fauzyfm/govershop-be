@@ -188,6 +188,32 @@ func (r *ProductRepository) GetCategories(ctx context.Context) ([]string, error)
 	return categories, nil
 }
 
+// GetAllBrands retrieves all unique brands (sorted)
+func (r *ProductRepository) GetAllBrands(ctx context.Context) ([]string, error) {
+	query := `
+		SELECT DISTINCT brand FROM products 
+		WHERE brand IS NOT NULL AND brand != ''
+		ORDER BY brand ASC
+	`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query brands: %w", err)
+	}
+	defer rows.Close()
+
+	var brands []string
+	for rows.Next() {
+		var brand string
+		if err := rows.Scan(&brand); err != nil {
+			return nil, fmt.Errorf("failed to scan brand: %w", err)
+		}
+		brands = append(brands, brand)
+	}
+
+	return brands, nil
+}
+
 // GetTypes retrieves list of available product types
 func (r *ProductRepository) GetTypes(ctx context.Context) ([]string, error) {
 	query := `
@@ -338,7 +364,7 @@ func (r *ProductRepository) MarkUnavailable(ctx context.Context, skuCodes []stri
 // ==========================================
 
 // GetAllForAdmin retrieves all products for admin (including unavailable) with filtering
-func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset int, search, category, typeStr, status string) ([]model.Product, int, error) {
+func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset int, search, category, brand, typeStr, status string) ([]model.Product, int, error) {
 	// Build WHERE clause
 	whereClause := " WHERE 1=1"
 	var args []interface{}
@@ -356,7 +382,14 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 		argCounter++
 	}
 
+	if brand != "" && brand != "all" {
+		whereClause += fmt.Sprintf(" AND brand = $%d", argCounter)
+		args = append(args, brand)
+		argCounter++
+	}
+
 	if typeStr != "" && typeStr != "all" {
+
 		whereClause += fmt.Sprintf(" AND type = $%d", argCounter)
 		args = append(args, typeStr)
 		argCounter++
@@ -384,7 +417,7 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
 		       display_name, is_best_seller, tags, image_url
 		FROM products
-	` + whereClause + fmt.Sprintf(" ORDER BY category, brand, product_name LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
+	` + whereClause + fmt.Sprintf(" ORDER BY length(buyer_sku_code) ASC, buyer_sku_code ASC LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
 
 	args = append(args, limit, offset)
 

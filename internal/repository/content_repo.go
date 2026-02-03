@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -171,31 +172,47 @@ func (r *ContentRepository) GetActiveCarousel(ctx context.Context) ([]model.Caro
 	return items, nil
 }
 
-// GetActiveBrandImages retrieves active brand images as a map
-func (r *ContentRepository) GetActiveBrandImages(ctx context.Context) (map[string]string, error) {
+// GetActiveBrandImages retrieves public brand data (images + settings)
+func (r *ContentRepository) GetActiveBrandImages(ctx context.Context) (map[string]model.BrandPublicData, error) {
+	// We want to combine data from:
+	// 1. homepage_content (for custom images uploaded via 'Game Card Images')
+	// 2. brand_settings (for status and best_seller flags)
+	// We prioritize the image from homepage_content if it exists.
 	query := `
-		SELECT brand_name, image_url
-		FROM homepage_content
-		WHERE content_type = 'brand_image' AND is_active = true AND brand_name IS NOT NULL
+		SELECT 
+			COALESCE(hc.brand_name, bs.brand_name) as brand_name,
+			COALESCE(hc.image_url, bs.custom_image_url, '') as image_url,
+			COALESCE(bs.is_best_seller, false) as is_best_seller,
+			COALESCE(bs.status, 'active') as status
+		FROM brand_settings bs
+		FULL OUTER JOIN (
+			SELECT brand_name, image_url 
+			FROM homepage_content 
+			WHERE content_type = 'brand_image' AND is_active = true
+		) hc ON bs.brand_name = hc.brand_name
+		WHERE hc.image_url IS NOT NULL 
+		   OR bs.is_best_seller = true 
+		   OR bs.status != 'active'
+		   OR bs.custom_image_url != ''
 	`
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query brand images: %w", err)
+		return nil, fmt.Errorf("failed to query brand data: %w", err)
 	}
 	defer rows.Close()
 
-	images := make(map[string]string)
+	data := make(map[string]model.BrandPublicData)
 	for rows.Next() {
-		var brandName, imageURL string
-		err := rows.Scan(&brandName, &imageURL)
+		var b model.BrandPublicData
+		err := rows.Scan(&b.BrandName, &b.ImageURL, &b.IsBestSeller, &b.Status)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan brand image: %w", err)
+			return nil, fmt.Errorf("failed to scan brand data: %w", err)
 		}
-		images[brandName] = imageURL
+		data[b.BrandName] = b
 	}
 
-	return images, nil
+	return data, nil
 }
 
 // GetActivePopup retrieves the active popup (within date range)
@@ -218,4 +235,108 @@ func (r *ContentRepository) GetActivePopup(ctx context.Context) (*model.PopupRes
 	}
 
 	return &p, nil
+}
+
+// GetAllBrandSettings retrieves all brand settings
+func (r *ContentRepository) GetAllBrandSettings(ctx context.Context) ([]model.BrandSetting, error) {
+	query := `
+		SELECT brand_name, slug, custom_image_url, is_best_seller, status, 
+		       COALESCE(topup_steps, '[]'::jsonb) as topup_steps, 
+		       COALESCE(description, '') as description,
+		       created_at, updated_at
+		FROM brand_settings
+		ORDER BY brand_name ASC
+	`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query brand settings: %w", err)
+	}
+	defer rows.Close()
+
+	var items []model.BrandSetting
+	for rows.Next() {
+		var b model.BrandSetting
+		var topupStepsJSON []byte
+		err := rows.Scan(
+			&b.BrandName, &b.Slug, &b.CustomImageURL, &b.IsBestSeller, &b.Status,
+			&topupStepsJSON, &b.Description,
+			&b.CreatedAt, &b.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan brand setting: %w", err)
+		}
+		// Parse JSONB topup_steps
+		if len(topupStepsJSON) > 0 {
+			if err := json.Unmarshal(topupStepsJSON, &b.TopupSteps); err != nil {
+				b.TopupSteps = []model.TopupStep{} // Default empty if parse fails
+			}
+		}
+		items = append(items, b)
+	}
+
+	return items, nil
+}
+
+// UpsertBrandSetting updates or inserts brand setting
+func (r *ContentRepository) UpsertBrandSetting(ctx context.Context, bs *model.BrandSetting) error {
+	// Marshal topup_steps to JSON
+	topupStepsJSON, err := json.Marshal(bs.TopupSteps)
+	if err != nil {
+		topupStepsJSON = []byte("[]")
+	}
+
+	query := `
+		INSERT INTO brand_settings (brand_name, slug, custom_image_url, is_best_seller, status, topup_steps, description)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (brand_name) DO UPDATE SET
+		slug = EXCLUDED.slug,
+		custom_image_url = EXCLUDED.custom_image_url,
+		is_best_seller = EXCLUDED.is_best_seller,
+		status = EXCLUDED.status,
+		topup_steps = EXCLUDED.topup_steps,
+		description = EXCLUDED.description,
+		updated_at = NOW()
+	`
+
+	_, err = r.db.Exec(ctx, query,
+		bs.BrandName, bs.Slug, bs.CustomImageURL, bs.IsBestSeller, bs.Status, topupStepsJSON, bs.Description,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to upsert brand setting: %w", err)
+	}
+
+	return nil
+}
+
+// GetBrandSetting retrieves a specific brand setting
+func (r *ContentRepository) GetBrandSetting(ctx context.Context, brandName string) (*model.BrandSetting, error) {
+	query := `
+		SELECT brand_name, slug, custom_image_url, is_best_seller, status,
+		       COALESCE(topup_steps, '[]'::jsonb) as topup_steps,
+		       COALESCE(description, '') as description,
+		       created_at, updated_at
+		FROM brand_settings
+		WHERE brand_name = $1
+	`
+
+	var b model.BrandSetting
+	var topupStepsJSON []byte
+	err := r.db.QueryRow(ctx, query, brandName).Scan(
+		&b.BrandName, &b.Slug, &b.CustomImageURL, &b.IsBestSeller, &b.Status,
+		&topupStepsJSON, &b.Description,
+		&b.CreatedAt, &b.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get brand setting: %w", err)
+	}
+
+	// Parse JSONB topup_steps
+	if len(topupStepsJSON) > 0 {
+		if err := json.Unmarshal(topupStepsJSON, &b.TopupSteps); err != nil {
+			b.TopupSteps = []model.TopupStep{}
+		}
+	}
+
+	return &b, nil
 }
