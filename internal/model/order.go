@@ -39,6 +39,8 @@ type Order struct {
 	CreatedAt       time.Time   `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time   `json:"updated_at" db:"updated_at"`
 	CompletedAt     *time.Time  `json:"completed_at,omitempty" db:"completed_at"`
+	OrderSource     string      `json:"order_source" db:"order_source"`
+	AdminNotes      string      `json:"admin_notes,omitempty" db:"admin_notes"`
 }
 
 // CreateOrderRequest is the request body for creating an order

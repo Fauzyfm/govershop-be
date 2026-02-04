@@ -20,6 +20,32 @@ func NewOrderRepository(db *pgxpool.Pool) *OrderRepository {
 	return &OrderRepository{db: db}
 }
 
+// GetDB returns the database pool for direct queries
+func (r *OrderRepository) GetDB() *pgxpool.Pool {
+	return r.db
+}
+
+// CreateWithSource creates an order with custom source (for admin topups)
+func (r *OrderRepository) CreateWithSource(ctx context.Context, refID, sku, productName, customerNo string, buyPrice, sellingPrice float64, source, notes string) (string, error) {
+	query := `
+		INSERT INTO orders (
+			ref_id, buyer_sku_code, product_name, customer_no,
+			buy_price, selling_price, status, order_source, admin_notes
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, 'processing', $7, $8
+		)
+		RETURNING id
+	`
+
+	var orderID string
+	err := r.db.QueryRow(ctx, query, refID, sku, productName, customerNo, buyPrice, sellingPrice, source, notes).Scan(&orderID)
+	if err != nil {
+		return "", fmt.Errorf("failed to create order with source: %w", err)
+	}
+
+	return orderID, nil
+}
+
 // Create creates a new order
 func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error {
 	query := `
@@ -146,6 +172,18 @@ func (r *OrderRepository) UpdateDigiflazzResponse(ctx context.Context, id string
 	return nil
 }
 
+// UpdateCustomerNo updates the customer number (for manual topup retries)
+func (r *OrderRepository) UpdateCustomerNo(ctx context.Context, id, customerNo string) error {
+	query := `UPDATE orders SET customer_no = $2, updated_at = NOW() WHERE id = $1`
+
+	_, err := r.db.Exec(ctx, query, id, customerNo)
+	if err != nil {
+		return fmt.Errorf("failed to update customer_no: %w", err)
+	}
+
+	return nil
+}
+
 // GetTotalRevenue calculate total revenue from successful orders
 func (r *OrderRepository) GetTotalRevenue(ctx context.Context) (float64, error) {
 	query := `
@@ -162,35 +200,12 @@ func (r *OrderRepository) GetTotalRevenue(ctx context.Context) (float64, error) 
 }
 
 // GetAll retrieves all orders with optional filtering (for admin)
-func (r *OrderRepository) GetAll(ctx context.Context, limit, offset int, search, status string) ([]model.Order, int, error) {
-	baseQuery := `
-		FROM orders
-		WHERE 1=1
-	`
-	var args []interface{}
-	argIdx := 1
-
-	if status != "" && status != "all" {
-		baseQuery += fmt.Sprintf(" AND status = $%d", argIdx)
-		args = append(args, status)
-		argIdx++
-	}
-
-	if search != "" {
-		baseQuery += fmt.Sprintf(" AND (ref_id ILIKE $%d OR customer_no ILIKE $%d OR product_name ILIKE $%d OR serial_number ILIKE $%d OR customer_email ILIKE $%d)", argIdx, argIdx, argIdx, argIdx, argIdx)
-		searchParam := "%" + search + "%"
-		args = append(args, searchParam, searchParam, searchParam, searchParam, searchParam)
-		argIdx++ // searchParam uses same index? No, pgx uses $1, $2. Actually reuse index?
-		// Postgres positional args must be unique. Let's simplify.
-		// Actually, standard way is $1, $2... so I need to increment properly or use named args (not supported by std lib directly simply).
-		// Re-write query construction carefully.
-	}
-
-	// Re-construct query builder logic safer
-	return r.getAllInternal(ctx, limit, offset, search, status)
+func (r *OrderRepository) GetAll(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo, paymentStatus, digiflazzStatus string) ([]model.Order, int, error) {
+	// Use the internal implementation with date range support
+	return r.getAllInternal(ctx, limit, offset, search, status, dateFrom, dateTo, paymentStatus, digiflazzStatus)
 }
 
-func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int, search, status string) ([]model.Order, int, error) {
+func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int, search, status, dateFrom, dateTo, paymentStatus, digiflazzStatus string) ([]model.Order, int, error) {
 	var conditions []string
 	var args []interface{}
 	argCounter := 1
@@ -215,6 +230,25 @@ func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int,
 		argCounter++
 	}
 
+	// Date range filter
+	if dateFrom != "" {
+		conditions = append(conditions, fmt.Sprintf("DATE(created_at) >= $%d", argCounter))
+		args = append(args, dateFrom)
+		argCounter++
+	}
+	if dateTo != "" {
+		conditions = append(conditions, fmt.Sprintf("DATE(created_at) <= $%d", argCounter))
+		args = append(args, dateTo)
+		argCounter++
+	}
+
+	// Digiflazz status filter
+	if digiflazzStatus != "" && digiflazzStatus != "all" {
+		conditions = append(conditions, fmt.Sprintf("digiflazz_status = $%d", argCounter))
+		args = append(args, digiflazzStatus)
+		argCounter++
+	}
+
 	whereStmt := ""
 	if len(conditions) > 0 {
 		whereStmt = " WHERE " + conditions[0]
@@ -232,14 +266,18 @@ func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int,
 	}
 
 	// Get Data
-	query := `
+	query := fmt.Sprintf(`
 		SELECT id, ref_id, buyer_sku_code, product_name, customer_no,
 		       buy_price, selling_price, status,
 		       COALESCE(digiflazz_status, ''), COALESCE(digiflazz_rc, ''), COALESCE(serial_number, ''), COALESCE(digiflazz_message, ''),
 		       COALESCE(customer_email, ''), COALESCE(customer_phone, ''), COALESCE(customer_name, ''),
-		       created_at, updated_at, completed_at
+		       created_at, updated_at, completed_at,
+		       COALESCE(order_source, 'website'), COALESCE(admin_notes, '')
 		FROM orders
-	` + whereStmt + fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
+		%s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereStmt, argCounter, argCounter+1)
 
 	args = append(args, limit, offset)
 
@@ -258,6 +296,7 @@ func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int,
 			&o.DigiflazzStatus, &o.DigiflazzRC, &o.SerialNumber, &o.DigiflazzMsg,
 			&o.CustomerEmail, &o.CustomerPhone, &o.CustomerName,
 			&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
+			&o.OrderSource, &o.AdminNotes,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan order: %w", err)

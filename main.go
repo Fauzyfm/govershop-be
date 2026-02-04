@@ -46,8 +46,8 @@ func main() {
 	webhookRepo := repository.NewWebhookLogRepository(db)
 	syncLogRepo := repository.NewSyncLogRepository(db)
 	contentRepo := repository.NewContentRepository(db)
+	adminSecurityRepo := repository.NewAdminSecurityRepository(db)
 
-	// Initialize handlers
 	// Initialize handlers
 	productHandler := handler.NewProductHandler(productRepo)
 	orderHandler := handler.NewOrderHandler(orderRepo, paymentRepo, productRepo, digiflazzSvc, pakasirSvc)
@@ -55,6 +55,7 @@ func main() {
 	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc)
 	validationHandler := handler.NewValidationHandler(cfg, productRepo, digiflazzSvc)
 	contentHandler := handler.NewContentHandler(contentRepo)
+	totpHandler := handler.NewTOTPHandler(cfg, adminSecurityRepo, orderRepo, paymentRepo, digiflazzSvc)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -157,6 +158,18 @@ func main() {
 	// Admin Brand Settings
 	mux.HandleFunc("GET /api/v1/admin/brands", authMiddleware.AdminAuth(contentHandler.GetBrandSettings))
 	mux.HandleFunc("PUT /api/v1/admin/brands/{brand}", authMiddleware.AdminAuth(contentHandler.UpdateBrandSetting))
+
+	// Admin TOTP / 2FA Security
+	mux.HandleFunc("GET /api/v1/admin/totp/status", authMiddleware.AdminAuth(totpHandler.GetTOTPStatus))
+	mux.HandleFunc("POST /api/v1/admin/totp/setup", authMiddleware.AdminAuth(totpHandler.SetupTOTP))
+	mux.HandleFunc("POST /api/v1/admin/totp/enable", authMiddleware.AdminAuth(totpHandler.EnableTOTP))
+	mux.HandleFunc("POST /api/v1/admin/totp/disable", authMiddleware.AdminAuth(totpHandler.DisableTOTP))
+
+	// Admin Manual Topup (requires TOTP verification)
+	mux.HandleFunc("POST /api/v1/admin/orders/{id}/manual-topup", authMiddleware.AdminAuth(totpHandler.ManualTopup))
+
+	// Admin Custom Topup (for cash/gift - requires password + TOTP)
+	mux.HandleFunc("POST /api/v1/admin/topup/custom", authMiddleware.AdminAuth(totpHandler.CustomTopup))
 
 	// Apply middleware to API routes
 	var apiHandler http.Handler = mux

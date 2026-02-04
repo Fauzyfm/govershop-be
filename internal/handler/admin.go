@@ -158,7 +158,7 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Get pagination params
-	limit := 50
+	limit := 100
 	offset := 0
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := parseInt(l); err == nil && parsed > 0 {
@@ -173,14 +173,25 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 	search := r.URL.Query().Get("search")
 	status := r.URL.Query().Get("status")
+	paymentStatus := r.URL.Query().Get("payment_status")
+	digiflazzStatus := r.URL.Query().Get("digiflazz_status")
 
-	orders, total, err := h.orderRepo.GetAll(ctx, limit, offset, search, status)
+	// Date range filter (default: today)
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
+	if dateFrom == "" && dateTo == "" {
+		today := time.Now().Format("2006-01-02")
+		dateFrom = today
+		dateTo = today
+	}
+
+	orders, total, err := h.orderRepo.GetAll(ctx, limit, offset, search, status, dateFrom, dateTo, paymentStatus, digiflazzStatus)
 	if err != nil {
 		InternalError(w, "Gagal mengambil data order")
 		return
 	}
 
-	// Enrich orders with payment status
+	// Enrich orders with payment status and profit
 	type AdminOrderResponse struct {
 		ID              string  `json:"id"`
 		RefID           string  `json:"ref_id"`
@@ -189,7 +200,9 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 		CustomerNo      string  `json:"customer_no"`
 		CustomerEmail   string  `json:"customer_email,omitempty"`
 		CustomerPhone   string  `json:"customer_phone,omitempty"`
+		BuyPrice        float64 `json:"buy_price"`
 		SellingPrice    float64 `json:"selling_price"`
+		Profit          float64 `json:"profit"`
 		Status          string  `json:"status"`
 		StatusLabel     string  `json:"status_label"`
 		PaymentStatus   string  `json:"payment_status"`
@@ -197,10 +210,24 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 		SerialNumber    string  `json:"serial_number,omitempty"`
 		Message         string  `json:"message,omitempty"`
 		CreatedAt       string  `json:"created_at"`
+		OrderSource     string  `json:"order_source"`
+		AdminNotes      string  `json:"admin_notes,omitempty"`
 	}
+
+	// Rp 10 biaya admin per transaksi
+	var totalRevenue, totalCost, totalProfit float64
+	var successfulOrders int
 
 	var enrichedOrders []AdminOrderResponse
 	for _, order := range orders {
+		// Calculate profit: only for website orders
+		var profit float64
+		if order.OrderSource == "website" || order.OrderSource == "" {
+			profit = order.SellingPrice - order.BuyPrice
+		} else {
+			profit = 0 // No profit for admin topups (cash/gift)
+		}
+
 		resp := AdminOrderResponse{
 			ID:              order.ID,
 			RefID:           order.RefID,
@@ -209,30 +236,63 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 			CustomerNo:      order.CustomerNo,
 			CustomerEmail:   order.CustomerEmail,
 			CustomerPhone:   order.CustomerPhone,
+			BuyPrice:        order.BuyPrice,
 			SellingPrice:    order.SellingPrice,
+			Profit:          profit,
 			Status:          string(order.Status),
 			StatusLabel:     order.GetStatusLabel(),
 			DigiflazzStatus: order.DigiflazzStatus,
 			SerialNumber:    order.SerialNumber,
 			Message:         order.DigiflazzMsg,
 			CreatedAt:       order.CreatedAt.Format(time.RFC3339),
+			OrderSource:     order.OrderSource,
+			AdminNotes:      order.AdminNotes,
 		}
 
 		// Get payment status if exists
-		if payment, err := h.paymentRepo.GetByOrderID(ctx, order.ID); err == nil && payment != nil {
-			resp.PaymentStatus = string(payment.Status)
-		} else {
-			resp.PaymentStatus = "-"
+		currentPaymentStatus := "-"
+
+		if order.OrderSource != "website" && order.OrderSource != "" {
+			currentPaymentStatus = "manual" // Admin topup
+		} else if payment, err := h.paymentRepo.GetByOrderID(ctx, order.ID); err == nil && payment != nil {
+			currentPaymentStatus = string(payment.Status)
+		}
+
+		// Filter by payment status if specified
+		if paymentStatus != "" && paymentStatus != "all" && currentPaymentStatus != paymentStatus {
+			continue
+		}
+
+		resp.PaymentStatus = currentPaymentStatus
+
+		// Calculate summary for successful orders only
+		if order.Status == "success" || order.Status == "processing" || order.Status == "paid" {
+			// Only sum revenue if it's a website order (real money in) OR source logic dictates otherwise
+			// For now, exclude admin topups from revenue/cost/profit stats entirely -> they are expenses/gifts
+			if order.OrderSource == "website" || order.OrderSource == "" {
+				totalRevenue += order.SellingPrice
+				totalCost += order.BuyPrice
+				totalProfit += profit
+			}
+			successfulOrders++
 		}
 
 		enrichedOrders = append(enrichedOrders, resp)
 	}
 
 	Success(w, "", map[string]interface{}{
-		"orders": enrichedOrders,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+		"orders":    enrichedOrders,
+		"total":     total,
+		"limit":     limit,
+		"offset":    offset,
+		"date_from": dateFrom,
+		"date_to":   dateTo,
+		"summary": map[string]interface{}{
+			"total_revenue":     totalRevenue,
+			"total_cost":        totalCost,
+			"total_profit":      totalProfit,
+			"successful_orders": successfulOrders,
+		},
 	})
 }
 
