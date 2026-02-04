@@ -27,8 +27,8 @@ info:
 servers:
   - url: http://localhost:8080
     description: Development Server (Local)
-  - url: https://govershop-be-production.up.railway.app
-    description: Production Server (Railway)
+  - url: https://govershop-govershop-be.lzfki7.easypanel.host
+    description: Production Server (Easypanel)
 
 tags:
   - name: Products
