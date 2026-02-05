@@ -532,7 +532,7 @@ func (h *TOTPHandler) getProductBySKU(ctx context.Context, sku string) (*Product
 	query := `
 		SELECT buyer_sku_code, product_name, COALESCE(buy_price, 0), COALESCE(selling_price, 0)
 		FROM products
-		WHERE buyer_sku_code = $1 AND is_active = true
+		WHERE buyer_sku_code = $1 AND buyer_product_status = true
 		LIMIT 1
 	`
 
