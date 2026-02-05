@@ -76,7 +76,13 @@ func (s *Service) CheckBalance() (*BalanceResponse, error) {
 
 // PriceListResponse represents the response from price list API
 type PriceListResponse struct {
-	Data []model.DigiflazzProduct `json:"data"`
+	Data json.RawMessage `json:"data"`
+}
+
+// ErrorResponseData represents error payload inside data field
+type ErrorResponseData struct {
+	RC      string `json:"rc"`
+	Message string `json:"message"`
 }
 
 // GetPriceList fetches the price list from Digiflazz
@@ -96,15 +102,36 @@ func (s *Service) GetPriceList(cmd string) ([]model.DigiflazzProduct, error) {
 		return nil, err
 	}
 
-	// DEBUG LOG
-	fmt.Printf("🔍 PRICE LIST RAW: %s\n", string(resp))
-
 	var result PriceListResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse price list response: %w", err)
+		return nil, fmt.Errorf("failed to parse price list response structure: %w", err)
 	}
 
-	return result.Data, nil
+	// Check if data is array or object
+	trimmedData := bytes.TrimSpace(result.Data)
+	if len(trimmedData) == 0 {
+		return nil, fmt.Errorf("empty data received from Digiflazz")
+	}
+
+	// If starts with '{', it's likely an error object
+	if trimmedData[0] == '{' {
+		var errData ErrorResponseData
+		if err := json.Unmarshal(result.Data, &errData); err != nil {
+			return nil, fmt.Errorf("failed to parse error data: %w", err)
+		}
+		return nil, fmt.Errorf("Digiflazz Error: %s (RC: %s)", errData.Message, errData.RC)
+	}
+
+	// If starts with '[', it's the product list
+	if trimmedData[0] == '[' {
+		var products []model.DigiflazzProduct
+		if err := json.Unmarshal(result.Data, &products); err != nil {
+			return nil, fmt.Errorf("failed to parse products list: %w", err)
+		}
+		return products, nil
+	}
+
+	return nil, fmt.Errorf("unknown data format from Digiflazz: %s", string(trimmedData))
 }
 
 // TopupRequest represents a topup transaction request

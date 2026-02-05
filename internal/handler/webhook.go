@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 
 	"govershop-api/internal/config"
 	"govershop-api/internal/model"
@@ -223,9 +224,17 @@ func (h *WebhookHandler) HandleDigiflazzWebhook(w http.ResponseWriter, r *http.R
 	// Find order by RefID
 	order, err := h.orderRepo.GetByRefID(ctx, payload.Data.RefID)
 	if err != nil {
-		log.Printf("[Webhook] Order not found: %s", payload.Data.RefID)
-		h.webhookRepo.MarkProcessed(ctx, logID, "order not found")
-		http.Error(w, "Order not found", http.StatusNotFound)
+		// If order not found (e.g. Validation transaction VAL-...), ignore it
+		if strings.Contains(err.Error(), "no rows in result set") {
+			log.Printf("[Webhook] Ignored unknown RefID: %s", payload.Data.RefID)
+			h.webhookRepo.MarkProcessed(ctx, logID, "ignored: unknown ref_id")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		log.Printf("[Webhook] Failed to get order: %v", err)
+		h.webhookRepo.MarkProcessed(ctx, logID, "error finding order")
+		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return
 	}
 

@@ -57,13 +57,14 @@ func (h *AdminHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // AdminHandler handles admin-related HTTP requests
 type AdminHandler struct {
-	config       *config.Config
-	digiflazzSvc *digiflazz.Service
-	productRepo  *repository.ProductRepository
-	orderRepo    *repository.OrderRepository
-	syncLogRepo  *repository.SyncLogRepository
-	paymentRepo  *repository.PaymentRepository
-	pakasirSvc   *pakasir.Service
+	config         *config.Config
+	digiflazzSvc   *digiflazz.Service
+	productRepo    *repository.ProductRepository
+	orderRepo      *repository.OrderRepository
+	syncLogRepo    *repository.SyncLogRepository
+	paymentRepo    *repository.PaymentRepository
+	pakasirSvc     *pakasir.Service
+	webhookLogRepo *repository.WebhookLogRepository
 }
 
 // NewAdminHandler creates a new AdminHandler
@@ -75,15 +76,17 @@ func NewAdminHandler(
 	syncLogRepo *repository.SyncLogRepository,
 	paymentRepo *repository.PaymentRepository,
 	pakasirSvc *pakasir.Service,
+	webhookLogRepo *repository.WebhookLogRepository,
 ) *AdminHandler {
 	return &AdminHandler{
-		config:       cfg,
-		digiflazzSvc: digiflazzSvc,
-		productRepo:  productRepo,
-		orderRepo:    orderRepo,
-		syncLogRepo:  syncLogRepo,
-		paymentRepo:  paymentRepo,
-		pakasirSvc:   pakasirSvc,
+		config:         cfg,
+		digiflazzSvc:   digiflazzSvc,
+		productRepo:    productRepo,
+		orderRepo:      orderRepo,
+		syncLogRepo:    syncLogRepo,
+		paymentRepo:    paymentRepo,
+		pakasirSvc:     pakasirSvc,
+		webhookLogRepo: webhookLogRepo,
 	}
 }
 
@@ -100,10 +103,8 @@ func (h *AdminHandler) GetBalance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// SyncProducts handles POST /api/v1/admin/sync/products
-func (h *AdminHandler) SyncProducts(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
+// PerformProductSync executes the product synchronization logic
+func (h *AdminHandler) PerformProductSync(ctx context.Context) (int, int, int, error) {
 	// Start sync log
 	logID, _ := h.syncLogRepo.StartSync(ctx, "prepaid")
 
@@ -114,8 +115,7 @@ func (h *AdminHandler) SyncProducts(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("[Sync] Failed to fetch products: %v", err)
 		h.syncLogRepo.CompleteSync(ctx, logID, 0, 0, 0, 0, err.Error())
-		InternalError(w, "Gagal mengambil data produk dari Digiflazz")
-		return
+		return 0, 0, 0, fmt.Errorf("gagal mengambil data produk dari Digiflazz: %w", err)
 	}
 
 	log.Printf("[Sync] Received %d products from Digiflazz", len(products))
@@ -145,9 +145,21 @@ func (h *AdminHandler) SyncProducts(w http.ResponseWriter, r *http.Request) {
 	h.syncLogRepo.CompleteSync(ctx, logID, len(products), created, updated, failed, "")
 
 	log.Printf("[Sync] Sync completed: total=%d, updated=%d, failed=%d", len(products), updated, failed)
+	return len(products), updated, failed, nil
+}
+
+// SyncProducts handles POST /api/v1/admin/sync/products
+func (h *AdminHandler) SyncProducts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	total, updated, failed, err := h.PerformProductSync(ctx)
+	if err != nil {
+		InternalError(w, err.Error())
+		return
+	}
 
 	Success(w, "Sync berhasil", map[string]interface{}{
-		"total":   len(products),
+		"total":   total,
 		"updated": updated,
 		"failed":  failed,
 	})
@@ -220,12 +232,12 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 	var enrichedOrders []AdminOrderResponse
 	for _, order := range orders {
-		// Calculate profit: only for website orders
+		// Calculate profit: website and admin_cash orders
 		var profit float64
-		if order.OrderSource == "website" || order.OrderSource == "" {
+		if order.OrderSource == "website" || order.OrderSource == "admin_cash" || order.OrderSource == "" {
 			profit = order.SellingPrice - order.BuyPrice
 		} else {
-			profit = 0 // No profit for admin topups (cash/gift)
+			profit = 0 // No profit for admin_gift
 		}
 
 		resp := AdminOrderResponse{
@@ -267,9 +279,8 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 		// Calculate summary for successful orders only
 		if order.Status == "success" || order.Status == "processing" || order.Status == "paid" {
-			// Only sum revenue if it's a website order (real money in) OR source logic dictates otherwise
-			// For now, exclude admin topups from revenue/cost/profit stats entirely -> they are expenses/gifts
-			if order.OrderSource == "website" || order.OrderSource == "" {
+			// Include website and admin_cash in revenue/profit stats
+			if order.OrderSource == "website" || order.OrderSource == "admin_cash" || order.OrderSource == "" {
 				totalRevenue += order.SellingPrice
 				totalCost += order.BuyPrice
 				totalProfit += profit
@@ -361,11 +372,31 @@ func (h *AdminHandler) SimulatePayment(w http.ResponseWriter, r *http.Request) {
 	Success(w, "Gunakan endpoint Pakasir untuk simulasi pembayaran", nil)
 }
 
-// StartProductSyncJob starts the background product sync job
-func StartProductSyncJob(ctx context.Context, cfg *config.Config, digiflazzSvc *digiflazz.Service, productRepo *repository.ProductRepository, syncLogRepo *repository.SyncLogRepository) {
-	// This would be called from main.go to start a ticker
-	// For now, just log
-	log.Println("[Sync] Product sync job initialized")
+// StartSyncJob starts the background product sync job
+func (h *AdminHandler) StartSyncJob(ctx context.Context) {
+	// Sync every 8 hours as requested
+	interval := 8 * time.Hour
+	ticker := time.NewTicker(interval)
+
+	log.Printf("[Sync] Auto-sync job initialized. Running every %v", interval)
+
+	go func() {
+		// Initial sync after 1 minute to ensure server is fully up
+		time.Sleep(1 * time.Minute)
+		log.Println("[Sync] Performing initial background sync...")
+		h.PerformProductSync(context.Background())
+
+		for {
+			select {
+			case <-ctx.Done():
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				log.Println("[Sync] Triggering scheduled auto-sync...")
+				h.PerformProductSync(context.Background())
+			}
+		}
+	}()
 }
 
 // ==========================================
@@ -750,5 +781,67 @@ func (h *AdminHandler) CheckOrderStatus(w http.ResponseWriter, r *http.Request) 
 		"status":         order.Status,
 		"pakasir_status": detail.Transaction.Status,
 		"changed":        false,
+	})
+}
+
+// GetSyncLogs handles GET /api/v1/admin/logs/sync
+func (h *AdminHandler) GetSyncLogs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	limit := 20
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := parseInt(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := parseInt(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	logs, total, err := h.syncLogRepo.GetAll(ctx, limit, offset)
+	if err != nil {
+		InternalError(w, "Gagal mengambil data sync logs")
+		return
+	}
+
+	Success(w, "", map[string]interface{}{
+		"logs":   logs,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+// GetWebhookLogs handles GET /api/v1/admin/logs/webhook
+func (h *AdminHandler) GetWebhookLogs(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	limit := 20
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := parseInt(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := parseInt(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	logs, total, err := h.webhookLogRepo.GetAll(ctx, limit, offset)
+	if err != nil {
+		InternalError(w, "Gagal mengambil data webhook logs")
+		return
+	}
+
+	Success(w, "", map[string]interface{}{
+		"logs":   logs,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
 	})
 }

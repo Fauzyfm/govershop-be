@@ -52,8 +52,12 @@ func main() {
 	productHandler := handler.NewProductHandler(productRepo)
 	orderHandler := handler.NewOrderHandler(orderRepo, paymentRepo, productRepo, digiflazzSvc, pakasirSvc)
 	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, digiflazzSvc)
-	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc)
-	validationHandler := handler.NewValidationHandler(cfg, productRepo, digiflazzSvc)
+	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc, webhookRepo)
+
+	// Start background jobs
+	adminHandler.StartSyncJob(context.Background())
+
+	validationHandler := handler.NewValidationHandler(cfg, productRepo, orderRepo, digiflazzSvc)
 	contentHandler := handler.NewContentHandler(contentRepo)
 	totpHandler := handler.NewTOTPHandler(cfg, adminSecurityRepo, orderRepo, paymentRepo, digiflazzSvc)
 
@@ -135,6 +139,8 @@ func main() {
 	mux.HandleFunc("GET /api/v1/admin/orders", authMiddleware.AdminAuth(adminHandler.GetOrders))
 	mux.HandleFunc("POST /api/v1/admin/orders/{id}/check-status", authMiddleware.AdminAuth(adminHandler.CheckOrderStatus))
 	mux.HandleFunc("POST /api/v1/admin/sync/products", authMiddleware.AdminAuth(adminHandler.SyncProducts))
+	mux.HandleFunc("GET /api/v1/admin/logs/sync", authMiddleware.AdminAuth(adminHandler.GetSyncLogs))
+	mux.HandleFunc("GET /api/v1/admin/logs/webhook", authMiddleware.AdminAuth(adminHandler.GetWebhookLogs))
 
 	// Admin Product CRUD
 	mux.HandleFunc("GET /api/v1/admin/products", authMiddleware.AdminAuth(adminHandler.GetAdminProducts))

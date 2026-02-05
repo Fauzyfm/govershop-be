@@ -286,3 +286,77 @@ func (r *SyncLogRepository) GetLastSync(ctx context.Context, syncType string) (*
 
 	return &s, nil
 }
+
+// GetAll retrieves sync logs with pagination
+func (r *SyncLogRepository) GetAll(ctx context.Context, limit, offset int) ([]model.SyncLog, int, error) {
+	// Count total
+	var total int
+	if err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM sync_logs").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count sync logs: %w", err)
+	}
+
+	query := `
+		SELECT id, sync_type, total_products, new_products, updated_products, failed_products,
+		       status, error_message, started_at, completed_at
+		FROM sync_logs
+		ORDER BY started_at DESC
+		LIMIT $1 OFFSET $2
+	`
+
+	rows, err := r.db.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query sync logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []model.SyncLog
+	for rows.Next() {
+		var s model.SyncLog
+		err := rows.Scan(
+			&s.ID, &s.SyncType, &s.TotalProducts, &s.NewProducts, &s.UpdatedProducts, &s.FailedProducts,
+			&s.Status, &s.ErrorMessage, &s.StartedAt, &s.CompletedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan sync log: %w", err)
+		}
+		logs = append(logs, s)
+	}
+
+	return logs, total, nil
+}
+
+// GetAll retrieves webhook logs with pagination
+func (r *WebhookLogRepository) GetAll(ctx context.Context, limit, offset int) ([]model.WebhookLog, int, error) {
+	// Count total
+	var total int
+	if err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM webhook_logs").Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count webhook logs: %w", err)
+	}
+
+	query := `
+		SELECT id, source, payload, processed, error_message, created_at
+		FROM webhook_logs
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2
+	`
+
+	rows, err := r.db.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query webhook logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []model.WebhookLog
+	for rows.Next() {
+		var w model.WebhookLog
+		err := rows.Scan(
+			&w.ID, &w.Source, &w.Payload, &w.Processed, &w.ErrorMessage, &w.CreatedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan webhook log: %w", err)
+		}
+		logs = append(logs, w)
+	}
+
+	return logs, total, nil
+}

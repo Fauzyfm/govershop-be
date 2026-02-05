@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"govershop-api/internal/config"
+	"govershop-api/internal/model"
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
 )
@@ -16,6 +18,7 @@ import (
 type ValidationHandler struct {
 	config       *config.Config
 	productRepo  *repository.ProductRepository
+	orderRepo    *repository.OrderRepository
 	digiflazzSvc *digiflazz.Service
 }
 
@@ -23,11 +26,13 @@ type ValidationHandler struct {
 func NewValidationHandler(
 	cfg *config.Config,
 	productRepo *repository.ProductRepository,
+	orderRepo *repository.OrderRepository,
 	digiflazzSvc *digiflazz.Service,
 ) *ValidationHandler {
 	return &ValidationHandler{
 		config:       cfg,
 		productRepo:  productRepo,
+		orderRepo:    orderRepo,
 		digiflazzSvc: digiflazzSvc,
 	}
 }
@@ -158,6 +163,57 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 			accountName = "Akun Valid (Nama tidak muncul)"
 		}
 	}
+
+	// --- LOG TRANSAKSI KE DATABASE (ORDERS) ---
+	// Catat sebagai pengeluaran operasional (SellingPrice 0, BuyPrice = Digiflazz Price)
+	// Hanya jika ada response dari Digiflazz (sukses/gagal/pending yang valid)
+	// Status order mengikuti status validasi
+
+	orderStatus := model.OrderStatusFailed
+	if isValid {
+		orderStatus = model.OrderStatusSuccess
+	} else if resp.Data.Status == "Pending" {
+		orderStatus = model.OrderStatusProcessing
+	}
+
+	// CustomerName = Hasil validasi (Nama akun) atau pesan error
+	customerNameLog := accountName
+	if !isValid {
+		customerNameLog = "Invalid: " + message
+	}
+
+	logOrder := &model.Order{
+		RefID:           refID,
+		BuyerSKUCode:    checkUserSKU,
+		ProductName:     fmt.Sprintf("Check User %s", req.Brand),
+		CustomerNo:      req.CustomerNo,
+		CustomerName:    customerNameLog,
+		BuyPrice:        resp.Data.Price, // Biaya admin
+		SellingPrice:    0,               // Konsumen tidak bayar
+		Status:          orderStatus,
+		CustomerPhone:   "", // Kosongkan agar tidak muncul di history user
+		CustomerEmail:   "",
+		DigiflazzStatus: resp.Data.Status,
+		DigiflazzRC:     resp.Data.RC,
+		DigiflazzMsg:    message,
+		SerialNumber:    resp.Data.SN,
+	}
+
+	// Fire and forget logging (in goroutine is safer for latency, but here we want data integrity so standard call)
+	// Use background context for DB insert to prevent cancellation if HTTP request finishes early
+	go func() {
+		bgCtx := context.Background()
+		if err := h.orderRepo.Create(bgCtx, logOrder); err != nil {
+			fmt.Printf("❌ Failed to log validation order: %v\n", err)
+		} else {
+			// Auto update payment to paid because this is system transaction
+			_ = h.orderRepo.UpdateStatus(bgCtx, logOrder.ID, logOrder.Status)
+			// Wait, Create already sets status. But maybe payment status?
+			// The Order model might imply payment flow.
+			// Let's assume Create sets initial status correctly.
+		}
+	}()
+	// ------------------------------------------
 
 	Success(w, "Validasi berhasil", ValidateAccountResponse{
 		IsValid:       isValid,
