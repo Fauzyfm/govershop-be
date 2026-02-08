@@ -57,6 +57,7 @@ type BrandSetting struct {
 	Slug           string      `json:"slug" db:"slug"`
 	CustomImageURL string      `json:"custom_image_url" db:"custom_image_url"`
 	IsBestSeller   bool        `json:"is_best_seller" db:"is_best_seller"`
+	IsVisible      bool        `json:"is_visible" db:"is_visible"`
 	Status         string      `json:"status" db:"status"` // 'active', 'coming_soon', 'maintenance'
 	TopupSteps     []TopupStep `json:"topup_steps" db:"topup_steps"`
 	Description    string      `json:"description" db:"description"`
@@ -76,6 +77,7 @@ type BrandPublicData struct {
 	BrandName    string      `json:"brand_name"`
 	ImageURL     string      `json:"image_url"`
 	IsBestSeller bool        `json:"is_best_seller"`
+	IsVisible    bool        `json:"is_visible"`
 	Status       string      `json:"status"`
 	TopupSteps   []TopupStep `json:"topup_steps,omitempty"`
 	Description  string      `json:"description,omitempty"`

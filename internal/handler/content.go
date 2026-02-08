@@ -284,6 +284,7 @@ type UpdateBrandSettingRequest struct {
 	Slug           string            `json:"slug"`
 	CustomImageURL string            `json:"custom_image_url"`
 	IsBestSeller   bool              `json:"is_best_seller"`
+	IsVisible      bool              `json:"is_visible"`
 	Status         string            `json:"status"` // 'active', 'coming_soon', 'maintenance'
 	TopupSteps     []model.TopupStep `json:"topup_steps"`
 	Description    string            `json:"description"`
@@ -313,6 +314,7 @@ func (h *ContentHandler) UpdateBrandSetting(w http.ResponseWriter, r *http.Reque
 		Slug:           req.Slug,
 		CustomImageURL: req.CustomImageURL,
 		IsBestSeller:   req.IsBestSeller,
+		IsVisible:      req.IsVisible,
 		Status:         req.Status,
 		TopupSteps:     req.TopupSteps,
 		Description:    req.Description,
@@ -345,6 +347,7 @@ func (h *ContentHandler) GetPublicBrandSetting(w http.ResponseWriter, r *http.Re
 			"description":    "",
 			"status":         "active",
 			"is_best_seller": false,
+			"is_visible":     true,
 		})
 		return
 	}
@@ -355,6 +358,7 @@ func (h *ContentHandler) GetPublicBrandSetting(w http.ResponseWriter, r *http.Re
 		"description":    setting.Description,
 		"status":         setting.Status,
 		"is_best_seller": setting.IsBestSeller,
+		"is_visible":     setting.IsVisible,
 		"image_url":      setting.CustomImageURL,
 	})
 }

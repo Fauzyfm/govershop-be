@@ -173,16 +173,19 @@ func (r *ContentRepository) GetActiveCarousel(ctx context.Context) ([]model.Caro
 }
 
 // GetActiveBrandImages retrieves public brand data (images + settings)
+// Returns all brands including hidden ones - frontend will filter by is_visible
 func (r *ContentRepository) GetActiveBrandImages(ctx context.Context) (map[string]model.BrandPublicData, error) {
 	// We want to combine data from:
 	// 1. homepage_content (for custom images uploaded via 'Game Card Images')
-	// 2. brand_settings (for status and best_seller flags)
+	// 2. brand_settings (for status, best_seller, and visibility flags)
 	// We prioritize the image from homepage_content if it exists.
+	// Return all brands so frontend can filter by is_visible
 	query := `
 		SELECT 
 			COALESCE(hc.brand_name, bs.brand_name) as brand_name,
 			COALESCE(hc.image_url, bs.custom_image_url, '') as image_url,
 			COALESCE(bs.is_best_seller, false) as is_best_seller,
+			COALESCE(bs.is_visible, true) as is_visible,
 			COALESCE(bs.status, 'active') as status
 		FROM brand_settings bs
 		FULL OUTER JOIN (
@@ -194,6 +197,7 @@ func (r *ContentRepository) GetActiveBrandImages(ctx context.Context) (map[strin
 		   OR bs.is_best_seller = true 
 		   OR bs.status != 'active'
 		   OR bs.custom_image_url != ''
+		   OR bs.is_visible = false
 	`
 
 	rows, err := r.db.Query(ctx, query)
@@ -205,7 +209,7 @@ func (r *ContentRepository) GetActiveBrandImages(ctx context.Context) (map[strin
 	data := make(map[string]model.BrandPublicData)
 	for rows.Next() {
 		var b model.BrandPublicData
-		err := rows.Scan(&b.BrandName, &b.ImageURL, &b.IsBestSeller, &b.Status)
+		err := rows.Scan(&b.BrandName, &b.ImageURL, &b.IsBestSeller, &b.IsVisible, &b.Status)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan brand data: %w", err)
 		}
@@ -240,7 +244,7 @@ func (r *ContentRepository) GetActivePopup(ctx context.Context) (*model.PopupRes
 // GetAllBrandSettings retrieves all brand settings
 func (r *ContentRepository) GetAllBrandSettings(ctx context.Context) ([]model.BrandSetting, error) {
 	query := `
-		SELECT brand_name, slug, custom_image_url, is_best_seller, status, 
+		SELECT brand_name, slug, custom_image_url, is_best_seller, COALESCE(is_visible, true) as is_visible, status, 
 		       COALESCE(topup_steps, '[]'::jsonb) as topup_steps, 
 		       COALESCE(description, '') as description,
 		       created_at, updated_at
@@ -259,7 +263,7 @@ func (r *ContentRepository) GetAllBrandSettings(ctx context.Context) ([]model.Br
 		var b model.BrandSetting
 		var topupStepsJSON []byte
 		err := rows.Scan(
-			&b.BrandName, &b.Slug, &b.CustomImageURL, &b.IsBestSeller, &b.Status,
+			&b.BrandName, &b.Slug, &b.CustomImageURL, &b.IsBestSeller, &b.IsVisible, &b.Status,
 			&topupStepsJSON, &b.Description,
 			&b.CreatedAt, &b.UpdatedAt,
 		)
@@ -287,12 +291,13 @@ func (r *ContentRepository) UpsertBrandSetting(ctx context.Context, bs *model.Br
 	}
 
 	query := `
-		INSERT INTO brand_settings (brand_name, slug, custom_image_url, is_best_seller, status, topup_steps, description)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO brand_settings (brand_name, slug, custom_image_url, is_best_seller, is_visible, status, topup_steps, description)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (brand_name) DO UPDATE SET
 		slug = EXCLUDED.slug,
 		custom_image_url = EXCLUDED.custom_image_url,
 		is_best_seller = EXCLUDED.is_best_seller,
+		is_visible = EXCLUDED.is_visible,
 		status = EXCLUDED.status,
 		topup_steps = EXCLUDED.topup_steps,
 		description = EXCLUDED.description,
@@ -300,7 +305,7 @@ func (r *ContentRepository) UpsertBrandSetting(ctx context.Context, bs *model.Br
 	`
 
 	_, err = r.db.Exec(ctx, query,
-		bs.BrandName, bs.Slug, bs.CustomImageURL, bs.IsBestSeller, bs.Status, topupStepsJSON, bs.Description,
+		bs.BrandName, bs.Slug, bs.CustomImageURL, bs.IsBestSeller, bs.IsVisible, bs.Status, topupStepsJSON, bs.Description,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert brand setting: %w", err)
@@ -312,7 +317,7 @@ func (r *ContentRepository) UpsertBrandSetting(ctx context.Context, bs *model.Br
 // GetBrandSetting retrieves a specific brand setting
 func (r *ContentRepository) GetBrandSetting(ctx context.Context, brandName string) (*model.BrandSetting, error) {
 	query := `
-		SELECT brand_name, slug, custom_image_url, is_best_seller, status,
+		SELECT brand_name, slug, custom_image_url, is_best_seller, COALESCE(is_visible, true) as is_visible, status,
 		       COALESCE(topup_steps, '[]'::jsonb) as topup_steps,
 		       COALESCE(description, '') as description,
 		       created_at, updated_at
@@ -323,7 +328,7 @@ func (r *ContentRepository) GetBrandSetting(ctx context.Context, brandName strin
 	var b model.BrandSetting
 	var topupStepsJSON []byte
 	err := r.db.QueryRow(ctx, query, brandName).Scan(
-		&b.BrandName, &b.Slug, &b.CustomImageURL, &b.IsBestSeller, &b.Status,
+		&b.BrandName, &b.Slug, &b.CustomImageURL, &b.IsBestSeller, &b.IsVisible, &b.Status,
 		&topupStepsJSON, &b.Description,
 		&b.CreatedAt, &b.UpdatedAt,
 	)
