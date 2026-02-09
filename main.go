@@ -15,6 +15,7 @@ import (
 	"govershop-api/internal/middleware"
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
+	"govershop-api/internal/service/email"
 	"govershop-api/internal/service/pakasir"
 )
 
@@ -38,6 +39,7 @@ func main() {
 	// Initialize services
 	digiflazzSvc := digiflazz.NewService(cfg)
 	pakasirSvc := pakasir.NewService(cfg)
+	emailSvc := email.NewService(cfg)
 
 	// Initialize repositories
 	productRepo := repository.NewProductRepository(db)
@@ -47,12 +49,13 @@ func main() {
 	syncLogRepo := repository.NewSyncLogRepository(db)
 	contentRepo := repository.NewContentRepository(db)
 	adminSecurityRepo := repository.NewAdminSecurityRepository(db)
+	userRepo := repository.NewUserRepository(db)
 
 	// Initialize handlers
 	productHandler := handler.NewProductHandler(productRepo)
 	orderHandler := handler.NewOrderHandler(orderRepo, paymentRepo, productRepo, digiflazzSvc, pakasirSvc)
-	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, digiflazzSvc)
-	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc, webhookRepo)
+	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, digiflazzSvc)
+	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc, webhookRepo, userRepo)
 
 	// Start background jobs
 	adminHandler.StartSyncJob(context.Background())
@@ -60,6 +63,7 @@ func main() {
 	validationHandler := handler.NewValidationHandler(cfg, productRepo, orderRepo, digiflazzSvc)
 	contentHandler := handler.NewContentHandler(contentRepo)
 	totpHandler := handler.NewTOTPHandler(cfg, adminSecurityRepo, orderRepo, paymentRepo, digiflazzSvc)
+	memberHandler := handler.NewMemberHandler(cfg, userRepo, productRepo, orderRepo, digiflazzSvc, emailSvc)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -97,6 +101,7 @@ func main() {
 
 	// Product endpoints
 	mux.HandleFunc("GET /api/v1/products", productHandler.GetProducts)
+	mux.HandleFunc("GET /api/v1/products/filters", productHandler.GetFilters)
 	mux.HandleFunc("GET /api/v1/products/categories", productHandler.GetCategories)
 	mux.HandleFunc("GET /api/v1/products/brands", productHandler.GetBrands)
 	mux.HandleFunc("GET /api/v1/products/{sku}", productHandler.GetProductBySKU)
@@ -124,6 +129,11 @@ func main() {
 
 	// Admin Auth (Public)
 	mux.HandleFunc("POST /api/v1/admin/login", adminHandler.Login)
+
+	// Member Auth (Public)
+	mux.HandleFunc("POST /api/v1/member/login", memberHandler.Login)
+	mux.HandleFunc("POST /api/v1/member/forgot-password", memberHandler.ForgotPassword)
+	mux.HandleFunc("POST /api/v1/member/reset-password", memberHandler.ResetPassword)
 
 	// ==========================================
 	// WEBHOOK ROUTES
@@ -177,11 +187,33 @@ func main() {
 	// Admin Custom Topup (for cash/gift - requires password + TOTP)
 	mux.HandleFunc("POST /api/v1/admin/topup/custom", authMiddleware.AdminAuth(totpHandler.CustomTopup))
 
+	// Admin Member Management
+	mux.HandleFunc("GET /api/v1/admin/members", authMiddleware.AdminAuth(memberHandler.GetMembers))
+	mux.HandleFunc("POST /api/v1/admin/members", authMiddleware.AdminAuth(memberHandler.CreateMember))
+	mux.HandleFunc("GET /api/v1/admin/members/{id}", authMiddleware.AdminAuth(memberHandler.GetMember))
+	mux.HandleFunc("PUT /api/v1/admin/members/{id}", authMiddleware.AdminAuth(memberHandler.UpdateMember))
+	mux.HandleFunc("DELETE /api/v1/admin/members/{id}", authMiddleware.AdminAuth(memberHandler.DeleteMember))
+	mux.HandleFunc("POST /api/v1/admin/members/{id}/topup", authMiddleware.AdminAuth(memberHandler.TopupMember))
+
+	// ==========================================
+	// MEMBER ROUTES (Protected with Member Auth Middleware)
+	// ==========================================
+	mux.HandleFunc("GET /api/v1/member/dashboard", authMiddleware.MemberAuth(memberHandler.GetDashboard))
+	mux.HandleFunc("GET /api/v1/member/profile", authMiddleware.MemberAuth(memberHandler.GetProfile))
+	mux.HandleFunc("PUT /api/v1/member/profile", authMiddleware.MemberAuth(memberHandler.UpdateProfile))
+	mux.HandleFunc("GET /api/v1/member/deposits", authMiddleware.MemberAuth(memberHandler.GetDeposits))
+	mux.HandleFunc("GET /api/v1/member/products", authMiddleware.MemberAuth(memberHandler.GetProducts))
+	mux.HandleFunc("GET /api/v1/member/products/{sku}", authMiddleware.MemberAuth(memberHandler.GetProductBySku))
+	mux.HandleFunc("GET /api/v1/member/orders", authMiddleware.MemberAuth(memberHandler.GetOrders))
+	mux.HandleFunc("GET /api/v1/member/orders/{id}", authMiddleware.MemberAuth(memberHandler.GetOrderByID))
+	mux.HandleFunc("POST /api/v1/member/orders", authMiddleware.MemberAuth(memberHandler.CreateOrder))
+	mux.HandleFunc("PUT /api/v1/member/password", authMiddleware.MemberAuth(memberHandler.ChangePassword))
+
 	// Apply middleware to API routes
 	var apiHandler http.Handler = mux
 	apiHandler = middleware.ContentTypeJSON(apiHandler)
 	apiHandler = middleware.Logger(apiHandler)
-	apiHandler = middleware.CORS(apiHandler)
+	apiHandler = middleware.CORS(apiHandler, cfg.FrontendURL)
 	apiHandler = middleware.Recoverer(apiHandler)
 
 	// Create main handler that routes docs separately

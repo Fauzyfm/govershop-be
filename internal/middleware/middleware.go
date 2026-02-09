@@ -7,13 +7,22 @@ import (
 )
 
 // CORS middleware handles Cross-Origin Resource Sharing
-func CORS(next http.Handler) http.Handler {
+func CORS(next http.Handler, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// Set specific origin or fallback to request origin if it matches allowed (simplified for now)
+		origin := r.Header.Get("Origin")
+		if origin != "" && (origin == allowedOrigin || allowedOrigin == "*") {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			// If no specific match, maybe fallback? For now let's try to use the config
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
 		w.Header().Set("Access-Control-Expose-Headers", "Link")
 		w.Header().Set("Access-Control-Max-Age", "300")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)

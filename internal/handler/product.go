@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 
 	"govershop-api/internal/model"
@@ -126,5 +127,40 @@ func (h *ProductHandler) GetBrands(w http.ResponseWriter, r *http.Request) {
 
 	Success(w, "", map[string]interface{}{
 		"brands": brands,
+	})
+}
+
+// GetFilters handles GET /api/v1/products/filters
+func (h *ProductHandler) GetFilters(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	categories, err := h.productRepo.GetCategories(ctx)
+	if err != nil {
+		log.Printf("Error getting categories: %v", err)
+		categories = []string{}
+	}
+
+	// Get all brands (pass empty category)
+	brands, err := h.productRepo.GetBrands(ctx, "")
+	if err != nil {
+		log.Printf("Error getting brands: %v", err)
+		brands = []model.Brand{}
+	}
+
+	brandNames := make([]string, len(brands))
+	for i, b := range brands {
+		brandNames[i] = b.Name
+	}
+
+	types, err := h.productRepo.GetUniqueTypes(ctx)
+	if err != nil {
+		log.Printf("Error getting types: %v", err)
+		types = []string{}
+	}
+
+	Success(w, "", map[string]interface{}{
+		"categories": categories,
+		"brands":     brandNames,
+		"types":      types,
 	})
 }

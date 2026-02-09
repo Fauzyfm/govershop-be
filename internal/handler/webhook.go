@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -21,6 +22,7 @@ type WebhookHandler struct {
 	orderRepo    *repository.OrderRepository
 	paymentRepo  *repository.PaymentRepository
 	webhookRepo  *repository.WebhookLogRepository
+	userRepo     *repository.UserRepository
 	digiflazzSvc *digiflazz.Service
 }
 
@@ -30,6 +32,7 @@ func NewWebhookHandler(
 	orderRepo *repository.OrderRepository,
 	paymentRepo *repository.PaymentRepository,
 	webhookRepo *repository.WebhookLogRepository,
+	userRepo *repository.UserRepository,
 	digiflazzSvc *digiflazz.Service,
 ) *WebhookHandler {
 	return &WebhookHandler{
@@ -37,6 +40,7 @@ func NewWebhookHandler(
 		orderRepo:    orderRepo,
 		paymentRepo:  paymentRepo,
 		webhookRepo:  webhookRepo,
+		userRepo:     userRepo,
 		digiflazzSvc: digiflazzSvc,
 	}
 }
@@ -147,6 +151,19 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 		log.Printf("[Topup] Failed to create transaction: %v", err)
 		// Check if it's a "Signature Anda salah" error or IP error
 		_ = h.orderRepo.UpdateDigiflazzResponse(ctx, order.ID, model.OrderStatusFailed, "", "", "", err.Error())
+
+		// REFUND IF MEMBER
+		if order.MemberID != nil {
+			amount := order.MemberPrice
+			if amount == nil {
+				amount = &order.SellingPrice
+			}
+			desc := fmt.Sprintf("Refund Gagal Transaksi (Initial) %s", order.RefID)
+			if err := h.userRepo.TopupBalance(ctx, *order.MemberID, *amount, desc, "SYSTEM"); err != nil {
+				log.Printf("CRITICAL: Failed to refund member balance for order %s: %v", order.ID, err)
+			}
+		}
+
 		return
 	}
 
@@ -177,6 +194,18 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 		resp.Data.SN,
 		resp.Data.Message,
 	)
+
+	// REFUND IF MEMBER AND FAILED
+	if orderStatus == model.OrderStatusFailed && order.MemberID != nil {
+		amount := order.MemberPrice
+		if amount == nil {
+			amount = &order.SellingPrice
+		}
+		desc := fmt.Sprintf("Refund Gagal Transaksi %s", order.RefID)
+		if err := h.userRepo.TopupBalance(ctx, *order.MemberID, *amount, desc, "SYSTEM"); err != nil {
+			log.Printf("CRITICAL: Failed to refund member balance for order %s: %v", order.ID, err)
+		}
+	}
 
 	log.Printf("[Topup] Order %s updated to status %s", order.ID, orderStatus)
 }
@@ -268,6 +297,18 @@ func (h *WebhookHandler) HandleDigiflazzWebhook(w http.ResponseWriter, r *http.R
 	}
 
 	log.Printf("[Webhook] Order %s updated to status %s", order.ID, orderStatus)
+
+	// REFUND IF MEMBER AND FAILED
+	if orderStatus == model.OrderStatusFailed && order.MemberID != nil {
+		amount := order.MemberPrice
+		if amount == nil {
+			amount = &order.SellingPrice
+		}
+		desc := fmt.Sprintf("Refund Gagal Transaksi %s", order.RefID)
+		if err := h.userRepo.TopupBalance(ctx, *order.MemberID, *amount, desc, "SYSTEM"); err != nil {
+			log.Printf("CRITICAL: Failed to refund member balance for order %s: %v", order.ID, err)
+		}
+	}
 
 	h.webhookRepo.MarkProcessed(ctx, logID, "")
 	w.WriteHeader(http.StatusOK)

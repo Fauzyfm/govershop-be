@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"time"
 )
 
@@ -31,10 +32,11 @@ type Product struct {
 	UpdatedAt           time.Time `json:"updated_at" db:"updated_at"`
 
 	// Custom fields (NOT overwritten by sync)
-	DisplayName  *string  `json:"display_name,omitempty" db:"display_name"` // Custom name for FE
-	IsBestSeller bool     `json:"is_best_seller" db:"is_best_seller"`       // Best seller flag
-	Tags         []string `json:"tags,omitempty" db:"tags"`                 // Product tags (e.g., "diamond", "wdp")
-	ImageURL     *string  `json:"image_url,omitempty" db:"image_url"`       // Brand/game logo URL
+	DisplayName         *string  `json:"display_name,omitempty" db:"display_name"`                   // Custom name for FE
+	IsBestSeller        bool     `json:"is_best_seller" db:"is_best_seller"`                         // Best seller flag
+	Tags                []string `json:"tags,omitempty" db:"tags"`                                   // Product tags (e.g., "diamond", "wdp")
+	ImageURL            *string  `json:"image_url,omitempty" db:"image_url"`                         // Brand/game logo URL
+	MemberMarkupPercent *float64 `json:"member_markup_percent,omitempty" db:"member_markup_percent"` // Special markup for members
 }
 
 // ProductResponse is the response format for FE (with calculated final price)
@@ -86,6 +88,34 @@ func (p *Product) ToResponse() ProductResponse {
 		resp.Price = *p.DiscountPrice
 		resp.OriginalPrice = &p.SellingPrice
 		resp.IsPromo = true
+	}
+
+	return resp
+}
+
+// ToMemberResponse converts Product to ProductResponse with member pricing
+func (p *Product) ToMemberResponse(defaultMemberMarkup float64) ProductResponse {
+	resp := p.ToResponse()
+
+	// Calculate member price
+	// Member Price = Buy Price + (Buy Price * Markup%)
+	markup := defaultMemberMarkup
+	if p.MemberMarkupPercent != nil {
+		markup = *p.MemberMarkupPercent
+	}
+
+	memberPrice := p.BuyPrice + (p.BuyPrice * markup / 100)
+
+	// Round up to nearest integer
+	memberPrice = math.Ceil(memberPrice)
+
+	// If member price is cheaper than selling price/discount price, use it
+	// Only apply if memberPrice is valid (> 0)
+	if memberPrice > 0 && memberPrice < resp.Price {
+		resp.Price = memberPrice
+		// Clear promo flags if member price is base price
+		resp.IsPromo = false
+		resp.OriginalPrice = nil
 	}
 
 	return resp

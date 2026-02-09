@@ -29,9 +29,9 @@ type Config struct {
 	PakasirWebhookURL string
 
 	// Pricing
-	DefaultMarkupPercent float64
+	DefaultMarkupPercent       float64
+	DefaultMemberMarkupPercent float64
 
-	// Sync
 	// Sync
 	ProductSyncInterval int // in minutes
 
@@ -39,6 +39,19 @@ type Config struct {
 	AdminUsername string
 	AdminPassword string
 	JWTSecret     string
+
+	// Member Auth
+	JWTSecretGovershop string
+
+	// Email (SMTP)
+	SMTPHost string
+	SMTPPort int
+	SMTPUser string
+	SMTPPass string
+	SMTPFrom string
+
+	// Frontend
+	FrontendURL string
 }
 
 // Global config instance
@@ -71,7 +84,8 @@ func Load() *Config {
 		PakasirWebhookURL: getEnv("PAKASIR_WEBHOOK_URL", ""),
 
 		// Pricing
-		DefaultMarkupPercent: getEnvFloat("DEFAULT_MARKUP_PERCENT", 3.0),
+		DefaultMarkupPercent:       getEnvFloat("DEFAULT_MARKUP_PERCENT", 3.0),
+		DefaultMemberMarkupPercent: getEnvFloat("DEFAULT_MEMBER_MARKUP_PERCENT", 0.7),
 
 		// Sync
 		ProductSyncInterval: getEnvInt("PRODUCT_SYNC_INTERVAL", 30),
@@ -80,6 +94,19 @@ func Load() *Config {
 		AdminUsername: getEnv("ADMIN_USERNAME", "admin"),
 		AdminPassword: getEnv("ADMIN_PASSWORD", "admin123"),
 		JWTSecret:     getEnv("JWT_SECRET", "superdupersecretjwtkey"),
+
+		// Member Auth
+		JWTSecretGovershop: getEnv("SECRET_JWT_GOVERSHOP", "membersecretkey"),
+
+		// Email (SMTP)
+		SMTPHost: getEnv("SMTP_HOST", ""),
+		SMTPPort: getEnvInt("SMTP_PORT", 587),
+		SMTPUser: getEnv("SMTP_USER", ""),
+		SMTPPass: getEnv("SMTP_PASS", ""),
+		SMTPFrom: getEnv("SMTP_FROM", ""),
+
+		// Frontend
+		FrontendURL: getEnv("FRONTEND_URL", "http://localhost:3000"),
 	}
 
 	AppConfig = config

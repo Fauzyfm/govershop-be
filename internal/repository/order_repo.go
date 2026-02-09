@@ -52,9 +52,10 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 		INSERT INTO orders (
 			ref_id, buyer_sku_code, product_name, customer_no,
 			buy_price, selling_price, status,
-			customer_email, customer_phone, customer_name
+			customer_email, customer_phone, customer_name,
+			member_id, member_price
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 		)
 		RETURNING id, created_at, updated_at
 	`
@@ -63,6 +64,7 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 		order.RefID, order.BuyerSKUCode, order.ProductName, order.CustomerNo,
 		order.BuyPrice, order.SellingPrice, order.Status,
 		order.CustomerEmail, order.CustomerPhone, order.CustomerName,
+		order.MemberID, order.MemberPrice,
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
 
 	if err != nil {
@@ -80,6 +82,7 @@ func (r *OrderRepository) GetByID(ctx context.Context, id string) (*model.Order,
 		       buy_price, selling_price, status,
 		       COALESCE(digiflazz_status, ''), COALESCE(digiflazz_rc, ''), COALESCE(serial_number, ''), COALESCE(digiflazz_message, ''),
 		       COALESCE(customer_email, ''), COALESCE(customer_phone, ''), COALESCE(customer_name, ''),
+		       member_id, member_price,
 		       created_at, updated_at, completed_at
 		FROM orders
 		WHERE id = $1
@@ -91,6 +94,7 @@ func (r *OrderRepository) GetByID(ctx context.Context, id string) (*model.Order,
 		&o.BuyPrice, &o.SellingPrice, &o.Status,
 		&o.DigiflazzStatus, &o.DigiflazzRC, &o.SerialNumber, &o.DigiflazzMsg,
 		&o.CustomerEmail, &o.CustomerPhone, &o.CustomerName,
+		&o.MemberID, &o.MemberPrice,
 		&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 	)
 	if err != nil {
@@ -107,6 +111,7 @@ func (r *OrderRepository) GetByRefID(ctx context.Context, refID string) (*model.
 		       buy_price, selling_price, status,
 		       COALESCE(digiflazz_status, ''), COALESCE(digiflazz_rc, ''), COALESCE(serial_number, ''), COALESCE(digiflazz_message, ''),
 		       COALESCE(customer_email, ''), COALESCE(customer_phone, ''), COALESCE(customer_name, ''),
+		       member_id, member_price,
 		       created_at, updated_at, completed_at
 		FROM orders
 		WHERE ref_id = $1
@@ -118,6 +123,7 @@ func (r *OrderRepository) GetByRefID(ctx context.Context, refID string) (*model.
 		&o.BuyPrice, &o.SellingPrice, &o.Status,
 		&o.DigiflazzStatus, &o.DigiflazzRC, &o.SerialNumber, &o.DigiflazzMsg,
 		&o.CustomerEmail, &o.CustomerPhone, &o.CustomerName,
+		&o.MemberID, &o.MemberPrice,
 		&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 	)
 	if err != nil {
@@ -383,6 +389,55 @@ func (r *OrderRepository) GetTodayStats(ctx context.Context) (totalOrders int, t
 	}
 
 	return totalOrders, totalRevenue, nil
+}
+
+// GetByMemberID retrieves orders for a specific member with pagination
+func (r *OrderRepository) GetByMemberID(ctx context.Context, memberID, limit, offset int) ([]model.Order, int, error) {
+	// Count total
+	var total int
+	countQuery := `SELECT COUNT(*) FROM orders WHERE member_id = $1`
+	err := r.db.QueryRow(ctx, countQuery, memberID).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count member orders: %w", err)
+	}
+
+	query := `
+		SELECT id, ref_id, buyer_sku_code, product_name, customer_no,
+		       buy_price, selling_price, status,
+		       COALESCE(digiflazz_status, ''), COALESCE(digiflazz_rc, ''), COALESCE(serial_number, ''), COALESCE(digiflazz_message, ''),
+		       COALESCE(customer_email, ''), COALESCE(customer_phone, ''), COALESCE(customer_name, ''),
+		       member_id, member_price,
+		       created_at, updated_at, completed_at
+		FROM orders
+		WHERE member_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+
+	rows, err := r.db.Query(ctx, query, memberID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query member orders: %w", err)
+	}
+	defer rows.Close()
+
+	var orders []model.Order
+	for rows.Next() {
+		var o model.Order
+		err := rows.Scan(
+			&o.ID, &o.RefID, &o.BuyerSKUCode, &o.ProductName, &o.CustomerNo,
+			&o.BuyPrice, &o.SellingPrice, &o.Status,
+			&o.DigiflazzStatus, &o.DigiflazzRC, &o.SerialNumber, &o.DigiflazzMsg,
+			&o.CustomerEmail, &o.CustomerPhone, &o.CustomerName,
+			&o.MemberID, &o.MemberPrice,
+			&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan member order: %w", err)
+		}
+		orders = append(orders, o)
+	}
+
+	return orders, total, nil
 }
 
 // CleanupExpiredPendingOrders cancels orders that have been pending too long

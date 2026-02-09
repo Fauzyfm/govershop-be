@@ -28,7 +28,7 @@ func (r *ProductRepository) GetAll(ctx context.Context) ([]model.Product, error)
 		       buy_price, markup_percent, selling_price, discount_price, is_available,
 		       buyer_product_status, seller_product_status, unlimited_stock, stock,
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
-		       display_name, is_best_seller, tags, image_url
+		       display_name, is_best_seller, tags, image_url, member_markup_percent
 		FROM products
 		WHERE is_available = true
 		ORDER BY category, brand, product_name
@@ -48,7 +48,7 @@ func (r *ProductRepository) GetAll(ctx context.Context) ([]model.Product, error)
 			&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
 			&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
 			&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
-			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL,
+			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL, &p.MemberMarkupPercent,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan product: %w", err)
@@ -66,7 +66,7 @@ func (r *ProductRepository) GetByCategory(ctx context.Context, category string) 
 		       buy_price, markup_percent, selling_price, discount_price, is_available,
 		       buyer_product_status, seller_product_status, unlimited_stock, stock,
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
-		       display_name, is_best_seller, tags, image_url
+		       display_name, is_best_seller, tags, image_url, member_markup_percent
 		FROM products
 		WHERE is_available = true AND LOWER(category) = LOWER($1)
 		ORDER BY brand, product_name
@@ -86,7 +86,7 @@ func (r *ProductRepository) GetByCategory(ctx context.Context, category string) 
 			&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
 			&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
 			&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
-			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL,
+			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL, &p.MemberMarkupPercent,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan product: %w", err)
@@ -104,7 +104,7 @@ func (r *ProductRepository) GetByBrand(ctx context.Context, brand string) ([]mod
 		       buy_price, markup_percent, selling_price, discount_price, is_available,
 		       buyer_product_status, seller_product_status, unlimited_stock, stock,
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
-		       display_name, is_best_seller, tags, image_url
+		       display_name, is_best_seller, tags, image_url, member_markup_percent
 		FROM products
 		WHERE is_available = true AND LOWER(brand) = LOWER($1)
 		ORDER BY category, product_name
@@ -124,7 +124,7 @@ func (r *ProductRepository) GetByBrand(ctx context.Context, brand string) ([]mod
 			&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
 			&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
 			&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
-			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL,
+			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL, &p.MemberMarkupPercent,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan product: %w", err)
@@ -142,7 +142,7 @@ func (r *ProductRepository) GetBySKU(ctx context.Context, sku string) (*model.Pr
 		       buy_price, markup_percent, selling_price, discount_price, is_available,
 		       buyer_product_status, seller_product_status, unlimited_stock, stock,
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
-		       display_name, is_best_seller, tags, image_url
+		       display_name, is_best_seller, tags, image_url, member_markup_percent
 		FROM products
 		WHERE buyer_sku_code = $1
 	`
@@ -153,7 +153,7 @@ func (r *ProductRepository) GetBySKU(ctx context.Context, sku string) (*model.Pr
 		&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
 		&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
 		&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
-		&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL,
+		&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL, &p.MemberMarkupPercent,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get product: %w", err)
@@ -286,7 +286,7 @@ func (r *ProductRepository) GetBrands(ctx context.Context, category string) ([]m
 }
 
 // UpsertProduct inserts or updates a product from Digiflazz sync
-func (r *ProductRepository) UpsertProduct(ctx context.Context, dfProduct model.DigiflazzProduct, markupPercent float64) error {
+func (r *ProductRepository) UpsertProduct(ctx context.Context, dfProduct model.DigiflazzProduct, markupPercent float64, memberMarkupPercent float64) error {
 	// Calculate selling price with markup
 	sellingPrice := dfProduct.Price + (dfProduct.Price * markupPercent / 100)
 	sellingPrice = math.Ceil(sellingPrice) // Round up
@@ -298,12 +298,12 @@ func (r *ProductRepository) UpsertProduct(ctx context.Context, dfProduct model.D
 			buyer_sku_code, product_name, category, brand, type, seller_name,
 			buy_price, markup_percent, selling_price, is_available,
 			buyer_product_status, seller_product_status, unlimited_stock, stock,
-			description, start_cut_off, end_cut_off, is_multi, last_sync_at
+			description, start_cut_off, end_cut_off, is_multi, last_sync_at, member_markup_percent
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10,
 			$11, $12, $13, $14,
-			$15, $16, $17, $18, $19
+			$15, $16, $17, $18, $19, $20
 		)
 		ON CONFLICT (buyer_sku_code) DO UPDATE SET
 			product_name = EXCLUDED.product_name,
@@ -329,7 +329,7 @@ func (r *ProductRepository) UpsertProduct(ctx context.Context, dfProduct model.D
 		dfProduct.BuyerSKUCode, dfProduct.ProductName, dfProduct.Category, dfProduct.Brand,
 		dfProduct.Type, dfProduct.SellerName, dfProduct.Price, markupPercent, sellingPrice, isAvailable,
 		dfProduct.BuyerProductStatus, dfProduct.SellerProductStatus, dfProduct.UnlimitedStock, dfProduct.Stock,
-		dfProduct.Desc, dfProduct.StartCutOff, dfProduct.EndCutOff, dfProduct.Multi, time.Now(),
+		dfProduct.Desc, dfProduct.StartCutOff, dfProduct.EndCutOff, dfProduct.Multi, time.Now(), memberMarkupPercent,
 	)
 
 	if err != nil {
@@ -362,7 +362,6 @@ func (r *ProductRepository) MarkUnavailable(ctx context.Context, skuCodes []stri
 // ==========================================
 // ADMIN CRUD METHODS
 // ==========================================
-
 // GetAllForAdmin retrieves all products for admin (including unavailable) with filtering
 func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset int, search, category, brand, typeStr, status string) ([]model.Product, int, error) {
 	// Build WHERE clause
@@ -415,7 +414,7 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 		       buy_price, markup_percent, selling_price, discount_price, is_available,
 		       buyer_product_status, seller_product_status, unlimited_stock, stock,
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
-		       display_name, is_best_seller, tags, image_url
+		       display_name, is_best_seller, tags, image_url, member_markup_percent
 		FROM products
 	` + whereClause + fmt.Sprintf(" ORDER BY length(buyer_sku_code) ASC, buyer_sku_code ASC LIMIT $%d OFFSET $%d", argCounter, argCounter+1)
 
@@ -435,7 +434,7 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 			&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
 			&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
 			&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
-			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL,
+			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL, &p.MemberMarkupPercent,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan product: %w", err)
@@ -448,7 +447,7 @@ func (r *ProductRepository) GetAllForAdmin(ctx context.Context, limit, offset in
 
 // UpdateCustomFields updates admin-editable fields for a product
 // When a pointer is nil, the field is not updated. When a pointer has an empty value, the field is set to NULL.
-func (r *ProductRepository) UpdateCustomFields(ctx context.Context, sku string, displayName *string, isBestSeller *bool, markupPercent *float64, discountPrice *float64, tags []string, imageURL *string, description *string) error {
+func (r *ProductRepository) UpdateCustomFields(ctx context.Context, sku string, displayName *string, isBestSeller *bool, markupPercent *float64, discountPrice *float64, tags []string, imageURL *string, description *string, memberMarkupPercent *float64) error {
 	// Build dynamic update query to allow clearing fields
 	query := `
 		UPDATE products SET
@@ -460,6 +459,7 @@ func (r *ProductRepository) UpdateCustomFields(ctx context.Context, sku string, 
 			image_url = $7,
 			description = $8,
 			selling_price = CEIL(buy_price + (buy_price * COALESCE($4, markup_percent) / 100)),
+			member_markup_percent = COALESCE($9, member_markup_percent),
 			updated_at = NOW()
 		WHERE buyer_sku_code = $1
 	`
@@ -485,7 +485,7 @@ func (r *ProductRepository) UpdateCustomFields(ctx context.Context, sku string, 
 		discountPriceVal = nil // Clear to NULL (0 means no discount)
 	}
 
-	result, err := r.db.Exec(ctx, query, sku, displayNameVal, isBestSeller, markupPercent, discountPriceVal, tags, imageURLVal, descriptionVal)
+	result, err := r.db.Exec(ctx, query, sku, displayNameVal, isBestSeller, markupPercent, discountPriceVal, tags, imageURLVal, descriptionVal, memberMarkupPercent)
 	if err != nil {
 		return fmt.Errorf("failed to update product: %w", err)
 	}
@@ -536,7 +536,7 @@ func (r *ProductRepository) GetByTag(ctx context.Context, tag string) ([]model.P
 		       buy_price, markup_percent, selling_price, discount_price, is_available,
 		       buyer_product_status, seller_product_status, unlimited_stock, stock,
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
-		       display_name, is_best_seller, tags
+		       display_name, is_best_seller, tags, image_url, member_markup_percent
 		FROM products
 		WHERE is_available = true AND $1 = ANY(tags)
 		ORDER BY category, brand, product_name
@@ -556,7 +556,7 @@ func (r *ProductRepository) GetByTag(ctx context.Context, tag string) ([]model.P
 			&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
 			&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
 			&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
-			&p.DisplayName, &p.IsBestSeller, &p.Tags,
+			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL, &p.MemberMarkupPercent,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan product: %w", err)
@@ -600,7 +600,7 @@ func (r *ProductRepository) GetBestSellers(ctx context.Context) ([]model.Product
 		       buy_price, markup_percent, selling_price, discount_price, is_available,
 		       buyer_product_status, seller_product_status, unlimited_stock, stock,
 		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
-		       display_name, is_best_seller, tags, image_url
+		       display_name, is_best_seller, tags, image_url, member_markup_percent
 		FROM products
 		WHERE is_available = true AND is_best_seller = true
 		ORDER BY category, brand, product_name
@@ -620,7 +620,7 @@ func (r *ProductRepository) GetBestSellers(ctx context.Context) ([]model.Product
 			&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
 			&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
 			&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
-			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL,
+			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL, &p.MemberMarkupPercent,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan product: %w", err)
@@ -641,4 +641,129 @@ func (r *ProductRepository) UpdateImageURL(ctx context.Context, sku string, imag
 	}
 
 	return nil
+}
+
+// GetProductsWithFilters retrieves products with advanced filtering
+func (r *ProductRepository) GetProductsWithFilters(ctx context.Context, search, category, brand, pType, status string, limit, offset int) ([]model.Product, int, error) {
+	// Base query
+	query := `
+		SELECT id, buyer_sku_code, product_name, category, brand, type, seller_name,
+		       buy_price, markup_percent, selling_price, discount_price, is_available,
+		       buyer_product_status, seller_product_status, unlimited_stock, stock,
+		       description, start_cut_off, end_cut_off, is_multi, last_sync_at, created_at, updated_at,
+		       display_name, is_best_seller, tags, image_url, member_markup_percent
+		FROM products
+		WHERE 1=1
+	`
+	countQuery := `SELECT COUNT(*) FROM products WHERE 1=1`
+
+	var args []interface{}
+	argCount := 1
+
+	// Add filters
+	if search != "" {
+		filter := fmt.Sprintf(" AND (LOWER(product_name) LIKE LOWER($%d) OR LOWER(buyer_sku_code) LIKE LOWER($%d))", argCount, argCount)
+		query += filter
+		countQuery += filter
+		args = append(args, "%"+search+"%")
+		argCount++
+	}
+
+	if category != "" && category != "all" {
+		query += fmt.Sprintf(" AND LOWER(category) = LOWER($%d)", argCount)
+		countQuery += fmt.Sprintf(" AND LOWER(category) = LOWER($%d)", argCount)
+		args = append(args, category)
+		argCount++
+	}
+
+	if brand != "" && brand != "all" {
+		query += fmt.Sprintf(" AND LOWER(brand) = LOWER($%d)", argCount)
+		countQuery += fmt.Sprintf(" AND LOWER(brand) = LOWER($%d)", argCount)
+		args = append(args, brand)
+		argCount++
+	}
+
+	if pType != "" && pType != "all" {
+		query += fmt.Sprintf(" AND LOWER(type) = LOWER($%d)", argCount)
+		countQuery += fmt.Sprintf(" AND LOWER(type) = LOWER($%d)", argCount)
+		args = append(args, pType)
+		argCount++
+	}
+
+	if status != "" && status != "all" {
+		if status == "active" {
+			query += " AND is_available = true"
+			countQuery += " AND is_available = true"
+		} else if status == "inactive" {
+			query += " AND is_available = false"
+			countQuery += " AND is_available = false"
+		}
+	} else {
+		// Default: only show available products for members, unless specific status requested (which usually implies admin,
+		// but member page might mostly want available. However, the requirement is "product list page with filters (like admin)".
+		// If member, we usually hide inactive products unless explicitly checking history?
+		// For ordering, we definitely only want active.
+		// Let's assume for this specific method, if no status is given, we default to available=true for members.
+		query += " AND is_available = true"
+		countQuery += " AND is_available = true"
+	}
+
+	// Order by
+	query += " ORDER BY buyer_sku_code ASC"
+
+	// Pagination
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argCount, argCount+1)
+	args = append(args, limit, offset)
+
+	// Execute count query first (without pagination args)
+	var total int
+	err := r.db.QueryRow(ctx, countQuery, args[:argCount-1]...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count products: %w", err)
+	}
+
+	// Execute main query
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query products: %w", err)
+	}
+	defer rows.Close()
+
+	var products []model.Product
+	for rows.Next() {
+		var p model.Product
+		err := rows.Scan(
+			&p.ID, &p.BuyerSKUCode, &p.ProductName, &p.Category, &p.Brand, &p.Type, &p.SellerName,
+			&p.BuyPrice, &p.MarkupPercent, &p.SellingPrice, &p.DiscountPrice, &p.IsAvailable,
+			&p.BuyerProductStatus, &p.SellerProductStatus, &p.UnlimitedStock, &p.Stock,
+			&p.Description, &p.StartCutOff, &p.EndCutOff, &p.IsMulti, &p.LastSyncAt, &p.CreatedAt, &p.UpdatedAt,
+			&p.DisplayName, &p.IsBestSeller, &p.Tags, &p.ImageURL, &p.MemberMarkupPercent,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan product: %w", err)
+		}
+		products = append(products, p)
+	}
+
+	return products, total, nil
+}
+
+// GetUniqueTypes retrieves all unique product types
+func (r *ProductRepository) GetUniqueTypes(ctx context.Context) ([]string, error) {
+	query := `SELECT DISTINCT type FROM products WHERE type != '' ORDER BY type`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query types: %w", err)
+	}
+	defer rows.Close()
+
+	var types []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		types = append(types, t)
+	}
+	return types, nil
 }

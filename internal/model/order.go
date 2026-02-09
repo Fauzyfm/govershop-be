@@ -41,6 +41,8 @@ type Order struct {
 	CompletedAt     *time.Time  `json:"completed_at,omitempty" db:"completed_at"`
 	OrderSource     string      `json:"order_source" db:"order_source"`
 	AdminNotes      string      `json:"admin_notes,omitempty" db:"admin_notes"`
+	MemberID        *int        `json:"member_id,omitempty" db:"member_id"`
+	MemberPrice     *float64    `json:"member_price,omitempty" db:"member_price"`
 }
 
 // CreateOrderRequest is the request body for creating an order
@@ -66,6 +68,7 @@ type OrderResponse struct {
 	CreatedAt    time.Time   `json:"created_at"`
 	CompletedAt  *time.Time  `json:"completed_at,omitempty"`
 	Payment      *Payment    `json:"payment,omitempty"`
+	IsMember     bool        `json:"is_member,omitempty"`
 }
 
 // GetStatusLabel returns human-readable status label

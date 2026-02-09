@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // LoginRequest handles admin login
@@ -24,7 +25,7 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-// Login handles POST /api/v1/admin/login
+// Login handles POST /api/v1/admin/login (Unified Login for Admin & Member)
 func (h *AdminHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -32,26 +33,61 @@ func (h *AdminHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate credentials from config (env)
-	if req.Username != h.config.AdminUsername || req.Password != h.config.AdminPassword {
+	// Get user by username from database
+	user, err := h.userRepo.GetByUsername(r.Context(), req.Username)
+	if err != nil {
+		log.Printf("Error getting user: %v", err)
+		InternalError(w, "Internal server error")
+		return
+	}
+
+	if user == nil {
 		http.Error(w, "Username atau password salah", http.StatusUnauthorized)
 		return
 	}
 
-	// Generate JWT
+	// Check if user is active
+	if user.Status != model.UserStatusActive {
+		http.Error(w, "Akun Anda telah dinonaktifkan. Hubungi admin.", http.StatusForbidden)
+		return
+	}
+
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		http.Error(w, "Username atau password salah", http.StatusUnauthorized)
+		return
+	}
+
+	// Generate JWT with role claims
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": req.Username,
-		"exp": time.Now().Add(time.Hour * 24).Unix(), // 24 hours
+		"sub":     user.Username,
+		"user_id": user.ID,
+		"role":    user.Role,
+		"exp":     time.Now().Add(time.Hour * 24).Unix(), // 24 hours
 	})
 
-	tokenString, err := token.SignedString([]byte(h.config.JWTSecret))
+	tokenString, err := token.SignedString([]byte(h.config.JWTSecretGovershop))
 	if err != nil {
+		log.Printf("Error signing token: %v", err)
 		InternalError(w, "Gagal generate token")
 		return
 	}
 
-	Success(w, "Login berhasil", map[string]string{
+	// Set HTTP-only cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "auth_token",
+		Value:    tokenString,
+		Expires:  time.Now().Add(24 * time.Hour),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   h.config.Env == "production",
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	Success(w, "Login berhasil", map[string]interface{}{
 		"token": tokenString,
+		"user":  user.ToResponse(),
+		"role":  user.Role,
 	})
 }
 
@@ -65,6 +101,7 @@ type AdminHandler struct {
 	paymentRepo    *repository.PaymentRepository
 	pakasirSvc     *pakasir.Service
 	webhookLogRepo *repository.WebhookLogRepository
+	userRepo       *repository.UserRepository
 }
 
 // NewAdminHandler creates a new AdminHandler
@@ -77,6 +114,7 @@ func NewAdminHandler(
 	paymentRepo *repository.PaymentRepository,
 	pakasirSvc *pakasir.Service,
 	webhookLogRepo *repository.WebhookLogRepository,
+	userRepo *repository.UserRepository,
 ) *AdminHandler {
 	return &AdminHandler{
 		config:         cfg,
@@ -87,6 +125,7 @@ func NewAdminHandler(
 		paymentRepo:    paymentRepo,
 		pakasirSvc:     pakasirSvc,
 		webhookLogRepo: webhookLogRepo,
+		userRepo:       userRepo,
 	}
 }
 
@@ -127,7 +166,7 @@ func (h *AdminHandler) PerformProductSync(ctx context.Context) (int, int, int, e
 	for _, p := range products {
 		skuCodes = append(skuCodes, p.BuyerSKUCode)
 
-		err := h.productRepo.UpsertProduct(ctx, p, h.config.DefaultMarkupPercent)
+		err := h.productRepo.UpsertProduct(ctx, p, h.config.DefaultMarkupPercent, h.config.DefaultMemberMarkupPercent)
 		if err != nil {
 			log.Printf("[Sync] Failed to upsert product %s: %v", p.BuyerSKUCode, err)
 			failed++
@@ -491,13 +530,14 @@ func (h *AdminHandler) GetAdminProduct(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProductRequest is the request body for updating product
 type UpdateProductRequest struct {
-	DisplayName   *string  `json:"display_name,omitempty"`
-	IsBestSeller  *bool    `json:"is_best_seller,omitempty"`
-	MarkupPercent *float64 `json:"markup_percent,omitempty"`
-	DiscountPrice *float64 `json:"discount_price,omitempty"`
-	Tags          []string `json:"tags,omitempty"`
-	ImageURL      *string  `json:"image_url,omitempty"`
-	Description   *string  `json:"description,omitempty"`
+	DisplayName         *string  `json:"display_name,omitempty"`
+	IsBestSeller        *bool    `json:"is_best_seller,omitempty"`
+	MarkupPercent       *float64 `json:"markup_percent,omitempty"`
+	DiscountPrice       *float64 `json:"discount_price,omitempty"`
+	Tags                []string `json:"tags,omitempty"`
+	ImageURL            *string  `json:"image_url,omitempty"`
+	Description         *string  `json:"description,omitempty"`
+	MemberMarkupPercent *float64 `json:"member_markup_percent,omitempty"`
 }
 
 // UpdateAdminProduct handles PUT /api/v1/admin/products/{sku}
@@ -516,7 +556,7 @@ func (h *AdminHandler) UpdateAdminProduct(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.productRepo.UpdateCustomFields(ctx, sku, req.DisplayName, req.IsBestSeller, req.MarkupPercent, req.DiscountPrice, req.Tags, req.ImageURL, req.Description); err != nil {
+	if err := h.productRepo.UpdateCustomFields(ctx, sku, req.DisplayName, req.IsBestSeller, req.MarkupPercent, req.DiscountPrice, req.Tags, req.ImageURL, req.Description, req.MemberMarkupPercent); err != nil {
 		if err.Error() == "product not found" {
 			NotFound(w, "Produk tidak ditemukan")
 			return
