@@ -244,25 +244,27 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 	// Enrich orders with payment status and profit
 	type AdminOrderResponse struct {
-		ID              string  `json:"id"`
-		RefID           string  `json:"ref_id"`
-		BuyerSKUCode    string  `json:"buyer_sku_code"`
-		ProductName     string  `json:"product_name"`
-		CustomerNo      string  `json:"customer_no"`
-		CustomerEmail   string  `json:"customer_email,omitempty"`
-		CustomerPhone   string  `json:"customer_phone,omitempty"`
-		BuyPrice        float64 `json:"buy_price"`
-		SellingPrice    float64 `json:"selling_price"`
-		Profit          float64 `json:"profit"`
-		Status          string  `json:"status"`
-		StatusLabel     string  `json:"status_label"`
-		PaymentStatus   string  `json:"payment_status"`
-		DigiflazzStatus string  `json:"digiflazz_status,omitempty"`
-		SerialNumber    string  `json:"serial_number,omitempty"`
-		Message         string  `json:"message,omitempty"`
-		CreatedAt       string  `json:"created_at"`
-		OrderSource     string  `json:"order_source"`
-		AdminNotes      string  `json:"admin_notes,omitempty"`
+		ID              string   `json:"id"`
+		RefID           string   `json:"ref_id"`
+		BuyerSKUCode    string   `json:"buyer_sku_code"`
+		ProductName     string   `json:"product_name"`
+		CustomerNo      string   `json:"customer_no"`
+		CustomerEmail   string   `json:"customer_email,omitempty"`
+		CustomerPhone   string   `json:"customer_phone,omitempty"`
+		BuyPrice        float64  `json:"buy_price"`
+		SellingPrice    float64  `json:"selling_price"`
+		Profit          float64  `json:"profit"`
+		Status          string   `json:"status"`
+		StatusLabel     string   `json:"status_label"`
+		PaymentStatus   string   `json:"payment_status"`
+		DigiflazzStatus string   `json:"digiflazz_status,omitempty"`
+		SerialNumber    string   `json:"serial_number,omitempty"`
+		Message         string   `json:"message,omitempty"`
+		CreatedAt       string   `json:"created_at"`
+		OrderSource     string   `json:"order_source"`
+		AdminNotes      string   `json:"admin_notes,omitempty"`
+		MemberID        *int     `json:"member_id,omitempty"`
+		MemberPrice     *float64 `json:"member_price,omitempty"`
 	}
 
 	// Rp 10 biaya admin per transaksi
@@ -298,6 +300,8 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:       order.CreatedAt.Format(time.RFC3339),
 			OrderSource:     order.OrderSource,
 			AdminNotes:      order.AdminNotes,
+			MemberID:        order.MemberID,
+			MemberPrice:     order.MemberPrice,
 		}
 
 		// Get payment status if exists

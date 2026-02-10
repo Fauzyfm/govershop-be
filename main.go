@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // Embed timezone data for Windows compatibility
 
 	"embed"
 	"govershop-api/internal/config"
@@ -23,6 +24,15 @@ import (
 var docsFS embed.FS
 
 func main() {
+	// Set timezone to WIB (Asia/Jakarta) for consistent timestamp handling
+	loc, err := time.LoadLocation("Asia/Jakarta")
+	if err != nil {
+		log.Printf("⚠️  Failed to load Asia/Jakarta timezone: %v, using system default", err)
+	} else {
+		time.Local = loc
+		log.Println("🕐 Timezone set to Asia/Jakarta (WIB)")
+	}
+
 	// Load configuration
 	cfg := config.Load()
 

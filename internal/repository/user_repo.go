@@ -370,24 +370,48 @@ func (r *UserRepository) RefundBalance(ctx context.Context, userID int, amount f
 	return tx.Commit(ctx)
 }
 
-// GetDeposits retrieves deposit history for a user
-func (r *UserRepository) GetDeposits(ctx context.Context, userID int, limit, offset int) ([]model.Deposit, int, error) {
+// GetDeposits retrieves deposit history for a user with filters
+func (r *UserRepository) GetDeposits(ctx context.Context, userID int, limit, offset int, dateFrom, dateTo, depositType string) ([]model.Deposit, int, error) {
+	// Build dynamic WHERE clause
+	whereClause := "WHERE user_id = $1"
+	args := []interface{}{userID}
+	paramIdx := 2
+
+	if dateFrom != "" {
+		whereClause += fmt.Sprintf(" AND created_at >= $%d::date", paramIdx)
+		args = append(args, dateFrom)
+		paramIdx++
+	}
+	if dateTo != "" {
+		whereClause += fmt.Sprintf(" AND created_at < ($%d::date + interval '1 day')", paramIdx)
+		args = append(args, dateTo)
+		paramIdx++
+	}
+	if depositType != "" && depositType != "all" {
+		whereClause += fmt.Sprintf(" AND type = $%d", paramIdx)
+		args = append(args, depositType)
+		paramIdx++
+	}
+
 	// Count query
 	var total int
-	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM deposits WHERE user_id = $1", userID).Scan(&total)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM deposits %s", whereClause)
+	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count deposits: %w", err)
 	}
 
 	// Data query
-	query := `
+	query := fmt.Sprintf(`
 		SELECT id, user_id, amount, type, description, reference_id, status, created_by, created_at
-		FROM deposits WHERE user_id = $1
+		FROM deposits %s
 		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
+		LIMIT $%d OFFSET $%d
+	`, whereClause, paramIdx, paramIdx+1)
 
-	rows, err := r.db.Query(ctx, query, userID, limit, offset)
+	args = append(args, limit, offset)
+
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get deposits: %w", err)
 	}

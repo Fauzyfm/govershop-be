@@ -313,10 +313,14 @@ func (h *MemberHandler) GetDeposits(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
 	if limit <= 0 {
-		limit = 20
+		limit = 10
 	}
 
-	deposits, total, err := h.userRepo.GetDeposits(r.Context(), userID, limit, offset)
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
+	depositType := r.URL.Query().Get("type")
+
+	deposits, total, err := h.userRepo.GetDeposits(r.Context(), userID, limit, offset, dateFrom, dateTo, depositType)
 	if err != nil {
 		log.Printf("Error getting deposits: %v", err)
 		InternalError(w, "Failed to get deposits")
@@ -463,6 +467,7 @@ func (h *MemberHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		Status:       model.OrderStatusProcessing, // Already paid via balance
 		SellingPrice: amount,
 		BuyPrice:     product.BuyPrice,
+		OrderSource:  "member",
 	}
 
 	if err := h.orderRepo.Create(ctx, order); err != nil {
@@ -526,10 +531,15 @@ func (h *MemberHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
 	if limit <= 0 {
-		limit = 20
+		limit = 10
 	}
 
-	orders, total, err := h.orderRepo.GetByMemberID(r.Context(), userID, limit, offset)
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
+	status := r.URL.Query().Get("status")
+	search := r.URL.Query().Get("search")
+
+	orders, total, err := h.orderRepo.GetByMemberID(r.Context(), userID, limit, offset, dateFrom, dateTo, status, search)
 	if err != nil {
 		log.Printf("Error getting member orders: %v", err)
 		InternalError(w, "Failed to get orders")
