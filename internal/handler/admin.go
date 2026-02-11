@@ -273,9 +273,9 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 	var enrichedOrders []AdminOrderResponse
 	for _, order := range orders {
-		// Calculate profit: website and admin_cash orders
+		// Calculate profit: website, admin_cash, and member orders
 		var profit float64
-		if order.OrderSource == "website" || order.OrderSource == "admin_cash" || order.OrderSource == "" {
+		if order.OrderSource == "website" || order.OrderSource == "admin_cash" || order.OrderSource == "member" || order.OrderSource == "" {
 			profit = order.SellingPrice - order.BuyPrice
 		} else {
 			profit = 0 // No profit for admin_gift
@@ -322,8 +322,8 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 		// Calculate summary for successful orders only
 		if order.Status == "success" || order.Status == "processing" || order.Status == "paid" {
-			// Include website and admin_cash in revenue/profit stats
-			if order.OrderSource == "website" || order.OrderSource == "admin_cash" || order.OrderSource == "" {
+			// Include website, admin_cash, and member in revenue/profit stats
+			if order.OrderSource == "website" || order.OrderSource == "admin_cash" || order.OrderSource == "member" || order.OrderSource == "" {
 				totalRevenue += order.SellingPrice
 				totalCost += order.BuyPrice
 				totalProfit += profit
