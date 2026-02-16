@@ -74,13 +74,13 @@ type CheckPaymentResponse struct {
 
 // WebhookPayload represents the webhook payload from qris.pw
 type WebhookPayload struct {
-	TransactionID string  `json:"transaction_id"`
-	OrderID       string  `json:"order_id"`
-	Amount        float64 `json:"amount"`
-	Status        string  `json:"status"` // "paid"
-	PaidAt        string  `json:"paid_at"`
-	Timestamp     int64   `json:"timestamp"`
-	Signature     string  `json:"signature"`
+	TransactionID string      `json:"transaction_id"`
+	OrderID       string      `json:"order_id"`
+	Amount        json.Number `json:"amount"`
+	Status        string      `json:"status"` // "paid"
+	PaidAt        string      `json:"paid_at"`
+	Timestamp     int64       `json:"timestamp"`
+	Signature     string      `json:"signature"`
 }
 
 // CreatePayment creates a QRIS payment via qris.pw

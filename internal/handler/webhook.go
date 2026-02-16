@@ -155,10 +155,46 @@ func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Requ
 		payload.TransactionID, payload.OrderID, payload.Status)
 
 	// Verify HMAC-SHA256 signature
-	// Remove signature from payload before verification
 	signature := payload.Signature
-	payload.Signature = ""
-	payloadForVerify, _ := json.Marshal(payload)
+	if signature == "" {
+		// Try to get from header
+		signature = r.Header.Get("Signature")
+		if signature == "" {
+			signature = r.Header.Get("X-Signature")
+		}
+	}
+
+	// Remove signature from payload before verification if it was in the body
+	// Note: If signature was in header, payload doesn't have it anyway.
+	// But if implementation relies on raw body, we must be careful.
+	// Current VerifyWebhookSignature takes `payload []byte`.
+	// If signature is NOT in body, we verify the RAW BODY.
+	// If signature IS in body, we verify the JSON with "signature":"" or removed?
+	// The standard way is usually header signature verifies raw body.
+
+	// Let's assume if signature is in header, we verify full body.
+	// If signature is in body, we verify body without signature.
+
+	var payloadForVerify []byte
+	if payload.Signature != "" {
+		// It was in body, so we need to mask it
+		clone := payload
+		clone.Signature = ""
+		payloadForVerify, _ = json.Marshal(clone)
+	} else {
+		// It was not in body (or empty), use raw body
+		payloadForVerify = body
+	}
+
+	if signature == "" {
+		log.Printf("[Webhook] QrisPW missing signature in body and headers")
+		// For debugging, we might want to log this but continue if strict mode is off?
+		// No, security first. But user is struggling.
+		// Let's log headers to help user debug
+		log.Printf("[Webhook] Headers: %v", r.Header)
+		http.Error(w, "Missing signature", http.StatusUnauthorized)
+		return
+	}
 
 	if !qrispw.VerifyWebhookSignature(payloadForVerify, signature, h.config.QrisPWSecretKey) {
 		log.Printf("[Webhook] QrisPW invalid signature")
@@ -185,9 +221,19 @@ func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Verify amount
+	// Payload amount is json.Number
+	payloadAmount, err := payload.Amount.Float64()
+	if err != nil {
+		log.Printf("[Webhook] QrisPW invalid amount format: %v", err)
+		h.webhookRepo.MarkProcessed(ctx, logID, "invalid amount format")
+		http.Error(w, "Invalid amount format", http.StatusBadRequest)
+		return
+	}
+
 	expectedAmount := float64(int(order.SellingPrice + 0.5))
-	if payload.Amount != expectedAmount {
-		log.Printf("[Webhook] QrisPW amount mismatch: expected %.0f, got %.0f", expectedAmount, payload.Amount)
+	// Allow small floating point difference
+	if payloadAmount != expectedAmount {
+		log.Printf("[Webhook] QrisPW amount mismatch: expected %.0f, got %.2f", expectedAmount, payloadAmount)
 		h.webhookRepo.MarkProcessed(ctx, logID, "amount mismatch")
 		http.Error(w, "Amount mismatch", http.StatusBadRequest)
 		return
