@@ -28,6 +28,10 @@ type Config struct {
 	PakasirAPIKey     string
 	PakasirWebhookURL string
 
+	// QrisPW
+	QrisPWAPIKey    string
+	QrisPWSecretKey string
+
 	// Pricing
 	DefaultMarkupPercent       float64
 	DefaultMemberMarkupPercent float64
@@ -82,6 +86,10 @@ func Load() *Config {
 		PakasirProject:    getEnv("PAKASIR_PROJECT", ""),
 		PakasirAPIKey:     getEnv("PAKASIR_API_KEY", ""),
 		PakasirWebhookURL: getEnv("PAKASIR_WEBHOOK_URL", ""),
+
+		// QrisPW
+		QrisPWAPIKey:    getEnv("API_KEY_QRISPW", ""),
+		QrisPWSecretKey: getEnv("SECRET_KEY_QRISPW", ""),
 
 		// Pricing
 		DefaultMarkupPercent:       getEnvFloat("DEFAULT_MARKUP_PERCENT", 3.0),

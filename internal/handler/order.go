@@ -7,35 +7,43 @@ import (
 	"net/http"
 	"time"
 
+	"govershop-api/internal/config"
 	"govershop-api/internal/model"
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
 	"govershop-api/internal/service/pakasir"
+	"govershop-api/internal/service/qrispw"
 )
 
 // OrderHandler handles order-related HTTP requests
 type OrderHandler struct {
+	config       *config.Config
 	orderRepo    *repository.OrderRepository
 	paymentRepo  *repository.PaymentRepository
 	productRepo  *repository.ProductRepository
 	digiflazzSvc *digiflazz.Service
 	pakasirSvc   *pakasir.Service
+	qrispwSvc    *qrispw.Service
 }
 
 // NewOrderHandler creates a new OrderHandler
 func NewOrderHandler(
+	cfg *config.Config,
 	orderRepo *repository.OrderRepository,
 	paymentRepo *repository.PaymentRepository,
 	productRepo *repository.ProductRepository,
 	digiflazzSvc *digiflazz.Service,
 	pakasirSvc *pakasir.Service,
+	qrispwSvc *qrispw.Service,
 ) *OrderHandler {
 	return &OrderHandler{
+		config:       cfg,
 		orderRepo:    orderRepo,
 		paymentRepo:  paymentRepo,
 		productRepo:  productRepo,
 		digiflazzSvc: digiflazzSvc,
 		pakasirSvc:   pakasirSvc,
+		qrispwSvc:    qrispwSvc,
 	}
 }
 
@@ -162,30 +170,83 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create payment via Pakasir
-	pakasirResp, err := h.pakasirSvc.CreateTransaction(
-		string(req.PaymentMethod),
-		order.RefID,
-		order.SellingPrice,
-	)
-	if err != nil {
-		InternalError(w, fmt.Sprintf("Gagal membuat pembayaran: %v", err))
-		return
-	}
+	// Route payment based on method
+	var payment *model.Payment
 
-	// Parse expiry time
-	expiredAt, _ := time.Parse(time.RFC3339, pakasirResp.Payment.ExpiredAt)
+	if req.PaymentMethod == model.PaymentMethodQRIS {
+		// ===== QRIS via qris.pw (no fee) =====
+		// ===== QRIS via qris.pw (no fee) =====
+		// Use request Host for callback URL (backend URL), NOT frontend URL
+		scheme := "https"
+		if r.TLS == nil && r.Host == "localhost:8080" {
+			scheme = "http"
+		}
+		callbackURL := fmt.Sprintf("%s://%s/api/v1/webhook/qrispw", scheme, r.Host)
 
-	// Save payment to database
-	payment := &model.Payment{
-		OrderID:       orderID,
-		Amount:        pakasirResp.Payment.Amount,
-		Fee:           pakasirResp.Payment.Fee,
-		TotalPayment:  pakasirResp.Payment.TotalPayment,
-		PaymentMethod: model.PaymentMethod(pakasirResp.Payment.PaymentMethod),
-		PaymentNumber: pakasirResp.Payment.PaymentNumber,
-		Status:        model.PaymentStatusPending,
-		ExpiredAt:     expiredAt,
+		customerName := "Customer"
+		if order.CustomerName != "" {
+			customerName = order.CustomerName
+		}
+
+		qrispwResp, err := h.qrispwSvc.CreatePayment(
+			order.RefID,
+			order.SellingPrice,
+			customerName,
+			callbackURL,
+		)
+		if err != nil {
+			InternalError(w, fmt.Sprintf("Gagal membuat pembayaran QRIS: %v", err))
+			return
+		}
+
+		// Parse expiry time from qris.pw (format: "2025-10-30 15:00:00")
+		var expiredAt time.Time
+		t, err := time.Parse("2006-01-02 15:04:05", qrispwResp.ExpiresAt)
+		if err == nil && !t.IsZero() {
+			expiredAt = t.Add(-7 * time.Hour)
+		} else {
+			// Fallback: 10 minutes from now if parsing fails
+			// Ensure fallback uses WIB logic implicitly via time.Now() configuration but adding 10m is safe
+			expiredAt = time.Now().Add(10 * time.Minute)
+		}
+
+		payment = &model.Payment{
+			OrderID:             orderID,
+			Amount:              order.SellingPrice,
+			Fee:                 0, // No fee with qris.pw
+			TotalPayment:        order.SellingPrice,
+			PaymentMethod:       model.PaymentMethodQRIS,
+			PaymentNumber:       qrispwResp.QRISString,
+			QRImageURL:          qrispwResp.QRISUrl,
+			QrisPWTransactionID: qrispwResp.TransactionID,
+			Status:              model.PaymentStatusPending,
+			ExpiredAt:           expiredAt,
+		}
+	} else {
+		// ===== VA/PayPal via Pakasir =====
+		pakasirResp, err := h.pakasirSvc.CreateTransaction(
+			string(req.PaymentMethod),
+			order.RefID,
+			order.SellingPrice,
+		)
+		if err != nil {
+			InternalError(w, fmt.Sprintf("Gagal membuat pembayaran: %v", err))
+			return
+		}
+
+		// Parse expiry time
+		expiredAt, _ := time.Parse(time.RFC3339, pakasirResp.Payment.ExpiredAt)
+
+		payment = &model.Payment{
+			OrderID:       orderID,
+			Amount:        pakasirResp.Payment.Amount,
+			Fee:           pakasirResp.Payment.Fee,
+			TotalPayment:  pakasirResp.Payment.TotalPayment,
+			PaymentMethod: model.PaymentMethod(pakasirResp.Payment.PaymentMethod),
+			PaymentNumber: pakasirResp.Payment.PaymentNumber,
+			Status:        model.PaymentStatusPending,
+			ExpiredAt:     expiredAt,
+		}
 	}
 
 	if err := h.paymentRepo.Create(ctx, payment); err != nil {
@@ -224,9 +285,15 @@ func (h *OrderHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel payment in Pakasir if exists
+	// Cancel payment if exists
 	if order.Status == model.OrderStatusWaitingPayment {
-		_ = h.pakasirSvc.CancelTransaction(order.RefID, order.SellingPrice)
+		// Get payment to check method
+		payment, _ := h.paymentRepo.GetByOrderID(ctx, orderID)
+		if payment != nil && payment.PaymentMethod != model.PaymentMethodQRIS {
+			// Only cancel via Pakasir for non-QRIS payments
+			// QRIS (qris.pw) auto-expires after 10 minutes, no cancel API needed
+			_ = h.pakasirSvc.CancelTransaction(order.RefID, order.SellingPrice)
+		}
 		_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusCancelled)
 	}
 
@@ -257,6 +324,22 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Get payment if exists
 	payment, _ := h.paymentRepo.GetByOrderID(ctx, orderID)
+
+	// Check status with qris.pw if pending and using QRIS
+	if payment != nil && payment.Status == model.PaymentStatusPending && payment.PaymentMethod == model.PaymentMethodQRIS && payment.QrisPWTransactionID != "" {
+		qrisStatus, err := h.qrispwSvc.CheckPaymentStatus(payment.QrisPWTransactionID)
+		if err == nil && qrisStatus.Success {
+			if qrisStatus.Status == "paid" {
+				_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusCompleted)
+				_ = h.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusPaid)
+				payment.Status = model.PaymentStatusCompleted
+				order.Status = model.OrderStatusPaid
+			} else if qrisStatus.Status == "expired" {
+				_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusExpired)
+				payment.Status = model.PaymentStatusExpired
+			}
+		}
+	}
 
 	// Build response
 	response := map[string]interface{}{

@@ -49,3 +49,23 @@ func CloseDB() {
 		log.Println("Database connection closed")
 	}
 }
+
+// RunMigrations runs auto-migrations to ensure DB schema is up to date
+func RunMigrations(pool *pgxpool.Pool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	migrations := []string{
+		// Add qris.pw related columns to payments table
+		`ALTER TABLE payments ADD COLUMN IF NOT EXISTS qr_image_url TEXT DEFAULT ''`,
+		`ALTER TABLE payments ADD COLUMN IF NOT EXISTS qrispw_transaction_id TEXT DEFAULT ''`,
+	}
+
+	for _, m := range migrations {
+		if _, err := pool.Exec(ctx, m); err != nil {
+			log.Printf("⚠️  Migration warning: %v", err)
+		}
+	}
+
+	log.Println("✅ Database migrations completed")
+}

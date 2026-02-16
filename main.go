@@ -18,20 +18,17 @@ import (
 	"govershop-api/internal/service/digiflazz"
 	"govershop-api/internal/service/email"
 	"govershop-api/internal/service/pakasir"
+	"govershop-api/internal/service/qrispw"
 )
 
 //go:embed docs/*
 var docsFS embed.FS
 
 func main() {
-	// Set timezone to WIB (Asia/Jakarta) for consistent timestamp handling
-	loc, err := time.LoadLocation("Asia/Jakarta")
-	if err != nil {
-		log.Printf("⚠️  Failed to load Asia/Jakarta timezone: %v, using system default", err)
-	} else {
-		time.Local = loc
-		log.Println("🕐 Timezone set to Asia/Jakarta (WIB)")
-	}
+	// Set timezone to WIB (Asia/Jakarta) using FixedZone for consistency
+	loc := time.FixedZone("Asia/Jakarta", 7*3600)
+	time.Local = loc
+	log.Printf("🕐 Timezone set to %s (WIB)", loc.String())
 
 	// Load configuration
 	cfg := config.Load()
@@ -46,9 +43,13 @@ func main() {
 	}
 	defer config.CloseDB()
 
+	// Run auto-migrations
+	config.RunMigrations(db)
+
 	// Initialize services
 	digiflazzSvc := digiflazz.NewService(cfg)
 	pakasirSvc := pakasir.NewService(cfg)
+	qrispwSvc := qrispw.NewService(cfg)
 	emailSvc := email.NewService(cfg)
 
 	// Initialize repositories
@@ -63,7 +64,7 @@ func main() {
 
 	// Initialize handlers
 	productHandler := handler.NewProductHandler(productRepo)
-	orderHandler := handler.NewOrderHandler(orderRepo, paymentRepo, productRepo, digiflazzSvc, pakasirSvc)
+	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, digiflazzSvc, pakasirSvc, qrispwSvc)
 	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, digiflazzSvc)
 	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc, webhookRepo, userRepo)
 
@@ -160,6 +161,7 @@ func main() {
 	// WEBHOOK ROUTES
 	// ==========================================
 	mux.HandleFunc("POST /api/v1/webhook/pakasir", webhookHandler.HandlePakasirWebhook)
+	mux.HandleFunc("POST /api/v1/webhook/qrispw", webhookHandler.HandleQrisPWWebhook)
 	mux.HandleFunc("POST /api/v1/webhook/digiflazz", webhookHandler.HandleDigiflazzWebhook)
 
 	// ==========================================

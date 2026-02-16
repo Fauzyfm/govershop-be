@@ -25,16 +25,18 @@ func (r *PaymentRepository) Create(ctx context.Context, payment *model.Payment) 
 	query := `
 		INSERT INTO payments (
 			order_id, amount, fee, total_payment,
-			payment_method, payment_number, status, expired_at
+			payment_method, payment_number, qr_image_url, qrispw_transaction_id,
+			status, expired_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10
 		)
 		RETURNING id, created_at
 	`
 
 	err := r.db.QueryRow(ctx, query,
 		payment.OrderID, payment.Amount, payment.Fee, payment.TotalPayment,
-		payment.PaymentMethod, payment.PaymentNumber, payment.Status, payment.ExpiredAt,
+		payment.PaymentMethod, payment.PaymentNumber, payment.QRImageURL, payment.QrisPWTransactionID,
+		payment.Status, payment.ExpiredAt,
 	).Scan(&payment.ID, &payment.CreatedAt)
 
 	if err != nil {
@@ -48,7 +50,10 @@ func (r *PaymentRepository) Create(ctx context.Context, payment *model.Payment) 
 func (r *PaymentRepository) GetByOrderID(ctx context.Context, orderID string) (*model.Payment, error) {
 	query := `
 		SELECT id, order_id, amount, fee, total_payment,
-		       payment_method, payment_number, status,
+		       payment_method, payment_number,
+		       COALESCE(qr_image_url, '') as qr_image_url,
+		       COALESCE(qrispw_transaction_id, '') as qrispw_transaction_id,
+		       status,
 		       expired_at, completed_at, created_at
 		FROM payments
 		WHERE order_id = $1
@@ -59,7 +64,9 @@ func (r *PaymentRepository) GetByOrderID(ctx context.Context, orderID string) (*
 	var p model.Payment
 	err := r.db.QueryRow(ctx, query, orderID).Scan(
 		&p.ID, &p.OrderID, &p.Amount, &p.Fee, &p.TotalPayment,
-		&p.PaymentMethod, &p.PaymentNumber, &p.Status,
+		&p.PaymentMethod, &p.PaymentNumber,
+		&p.QRImageURL, &p.QrisPWTransactionID,
+		&p.Status,
 		&p.ExpiredAt, &p.CompletedAt, &p.CreatedAt,
 	)
 	if err != nil {
@@ -73,7 +80,10 @@ func (r *PaymentRepository) GetByOrderID(ctx context.Context, orderID string) (*
 func (r *PaymentRepository) GetByID(ctx context.Context, id string) (*model.Payment, error) {
 	query := `
 		SELECT id, order_id, amount, fee, total_payment,
-		       payment_method, payment_number, status,
+		       payment_method, payment_number,
+		       COALESCE(qr_image_url, '') as qr_image_url,
+		       COALESCE(qrispw_transaction_id, '') as qrispw_transaction_id,
+		       status,
 		       expired_at, completed_at, created_at
 		FROM payments
 		WHERE id = $1
@@ -82,7 +92,9 @@ func (r *PaymentRepository) GetByID(ctx context.Context, id string) (*model.Paym
 	var p model.Payment
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&p.ID, &p.OrderID, &p.Amount, &p.Fee, &p.TotalPayment,
-		&p.PaymentMethod, &p.PaymentNumber, &p.Status,
+		&p.PaymentMethod, &p.PaymentNumber,
+		&p.QRImageURL, &p.QrisPWTransactionID,
+		&p.Status,
 		&p.ExpiredAt, &p.CompletedAt, &p.CreatedAt,
 	)
 	if err != nil {
@@ -153,7 +165,10 @@ func (r *PaymentRepository) MarkExpiredPayments(ctx context.Context) (int, error
 func (r *PaymentRepository) GetPendingPayments(ctx context.Context) ([]model.Payment, error) {
 	query := `
 		SELECT id, order_id, amount, fee, total_payment,
-		       payment_method, payment_number, status,
+		       payment_method, payment_number,
+		       COALESCE(qr_image_url, '') as qr_image_url,
+		       COALESCE(qrispw_transaction_id, '') as qrispw_transaction_id,
+		       status,
 		       expired_at, completed_at, created_at
 		FROM payments
 		WHERE status = 'pending' AND expired_at > NOW()
@@ -170,7 +185,9 @@ func (r *PaymentRepository) GetPendingPayments(ctx context.Context) ([]model.Pay
 		var p model.Payment
 		err := rows.Scan(
 			&p.ID, &p.OrderID, &p.Amount, &p.Fee, &p.TotalPayment,
-			&p.PaymentMethod, &p.PaymentNumber, &p.Status,
+			&p.PaymentMethod, &p.PaymentNumber,
+			&p.QRImageURL, &p.QrisPWTransactionID,
+			&p.Status,
 			&p.ExpiredAt, &p.CompletedAt, &p.CreatedAt,
 		)
 		if err != nil {

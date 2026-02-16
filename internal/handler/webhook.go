@@ -14,6 +14,7 @@ import (
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
 	"govershop-api/internal/service/pakasir"
+	"govershop-api/internal/service/qrispw"
 )
 
 // WebhookHandler handles webhook callbacks from external services
@@ -113,6 +114,93 @@ func (h *WebhookHandler) HandlePakasirWebhook(w http.ResponseWriter, r *http.Req
 	// Update order status to paid
 	if err := h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusPaid); err != nil {
 		log.Printf("[Webhook] Failed to update order status: %v", err)
+		h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
+		http.Error(w, "Internal Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Process topup to Digiflazz
+	go h.processTopup(order)
+
+	h.webhookRepo.MarkProcessed(ctx, logID, "")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+}
+
+// HandleQrisPWWebhook handles POST /api/v1/webhook/qrispw
+func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Read body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("[Webhook] Failed to read QrisPW webhook body: %v", err)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// Log webhook
+	logID, _ := h.webhookRepo.Create(ctx, "qrispw", string(body))
+
+	// Parse payload
+	var payload qrispw.WebhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("[Webhook] Failed to parse QrisPW webhook: %v", err)
+		h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[Webhook] QrisPW webhook received: transaction_id=%s, order_id=%s, status=%s",
+		payload.TransactionID, payload.OrderID, payload.Status)
+
+	// Verify HMAC-SHA256 signature
+	// Remove signature from payload before verification
+	signature := payload.Signature
+	payload.Signature = ""
+	payloadForVerify, _ := json.Marshal(payload)
+
+	if !qrispw.VerifyWebhookSignature(payloadForVerify, signature, h.config.QrisPWSecretKey) {
+		log.Printf("[Webhook] QrisPW invalid signature")
+		h.webhookRepo.MarkProcessed(ctx, logID, "invalid signature")
+		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+		return
+	}
+
+	// Only process paid payments
+	if payload.Status != "paid" {
+		log.Printf("[Webhook] QrisPW ignoring non-paid status: %s", payload.Status)
+		h.webhookRepo.MarkProcessed(ctx, logID, "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Find order by RefID (which is used as order_id in qris.pw)
+	order, err := h.orderRepo.GetByRefID(ctx, payload.OrderID)
+	if err != nil {
+		log.Printf("[Webhook] QrisPW order not found: %s", payload.OrderID)
+		h.webhookRepo.MarkProcessed(ctx, logID, "order not found")
+		http.Error(w, "Order not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify amount
+	expectedAmount := float64(int(order.SellingPrice + 0.5))
+	if payload.Amount != expectedAmount {
+		log.Printf("[Webhook] QrisPW amount mismatch: expected %.0f, got %.0f", expectedAmount, payload.Amount)
+		h.webhookRepo.MarkProcessed(ctx, logID, "amount mismatch")
+		http.Error(w, "Amount mismatch", http.StatusBadRequest)
+		return
+	}
+
+	// Update payment status
+	if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusCompleted); err != nil {
+		log.Printf("[Webhook] QrisPW failed to update payment: %v", err)
+	}
+
+	// Update order status to paid
+	if err := h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusPaid); err != nil {
+		log.Printf("[Webhook] QrisPW failed to update order status: %v", err)
 		h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return

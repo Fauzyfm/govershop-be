@@ -86,8 +86,8 @@ func (h *ValidationHandler) CalculatePrice(w http.ResponseWriter, r *http.Reques
 
 	switch {
 	case method == "qris" || method == "shopeepay_qris" || method == "dana_qris":
-		// QRIS: 0.7% + 310
-		paymentFee = (sellingPrice * 0.007) + 310
+		// QRIS via qris.pw: Gratis (no fee)
+		paymentFee = 0
 	case method == "paypal":
 		// Paypal: 1%
 		paymentFee = sellingPrice * 0.01

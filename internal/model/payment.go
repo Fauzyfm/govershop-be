@@ -31,19 +31,21 @@ const (
 	PaymentMethodATMBersamaVA PaymentMethod = "atm_bersama_va"
 )
 
-// Payment represents a payment transaction via Pakasir
+// Payment represents a payment transaction
 type Payment struct {
-	ID            string        `json:"id" db:"id"`
-	OrderID       string        `json:"order_id" db:"order_id"`
-	Amount        float64       `json:"amount" db:"amount"`
-	Fee           float64       `json:"fee" db:"fee"`
-	TotalPayment  float64       `json:"total_payment" db:"total_payment"`
-	PaymentMethod PaymentMethod `json:"payment_method" db:"payment_method"`
-	PaymentNumber string        `json:"payment_number" db:"payment_number"` // QR string or VA number
-	Status        PaymentStatus `json:"status" db:"status"`
-	ExpiredAt     time.Time     `json:"expired_at" db:"expired_at"`
-	CompletedAt   *time.Time    `json:"completed_at,omitempty" db:"completed_at"`
-	CreatedAt     time.Time     `json:"created_at" db:"created_at"`
+	ID                  string        `json:"id" db:"id"`
+	OrderID             string        `json:"order_id" db:"order_id"`
+	Amount              float64       `json:"amount" db:"amount"`
+	Fee                 float64       `json:"fee" db:"fee"`
+	TotalPayment        float64       `json:"total_payment" db:"total_payment"`
+	PaymentMethod       PaymentMethod `json:"payment_method" db:"payment_method"`
+	PaymentNumber       string        `json:"payment_number" db:"payment_number"`                         // QR string or VA number
+	QRImageURL          string        `json:"qr_image_url,omitempty" db:"qr_image_url"`                   // QRIS image URL from qris.pw
+	QrisPWTransactionID string        `json:"qrispw_transaction_id,omitempty" db:"qrispw_transaction_id"` // Transaction ID from qris.pw
+	Status              PaymentStatus `json:"status" db:"status"`
+	ExpiredAt           time.Time     `json:"expired_at" db:"expired_at"`
+	CompletedAt         *time.Time    `json:"completed_at,omitempty" db:"completed_at"`
+	CreatedAt           time.Time     `json:"created_at" db:"created_at"`
 }
 
 // InitiatePaymentRequest is the request body for initiating payment
@@ -60,8 +62,9 @@ type PaymentResponse struct {
 	TotalPayment  float64       `json:"total_payment"`
 	PaymentMethod PaymentMethod `json:"payment_method"`
 	PaymentNumber string        `json:"payment_number"`
-	QRString      string        `json:"qr_string,omitempty"` // Derived from PaymentNumber for QRIS
-	VANumber      string        `json:"va_number,omitempty"` // Derived from PaymentNumber for VA
+	QRString      string        `json:"qr_string,omitempty"`    // Derived from PaymentNumber for QRIS
+	QRImageURL    string        `json:"qr_image_url,omitempty"` // QRIS image URL from qris.pw
+	VANumber      string        `json:"va_number,omitempty"`    // Derived from PaymentNumber for VA
 	Status        PaymentStatus `json:"status"`
 	ExpiredAt     time.Time     `json:"expired_at"`
 	ExpiredIn     int64         `json:"expired_in"` // Seconds until expiration
@@ -90,6 +93,7 @@ func (p *Payment) ToResponse() PaymentResponse {
 	// Map PaymentNumber to specific fields for frontend convenience
 	if p.PaymentMethod == PaymentMethodQRIS {
 		resp.QRString = p.PaymentNumber
+		resp.QRImageURL = p.QRImageURL
 	} else {
 		resp.VANumber = p.PaymentNumber
 	}
