@@ -78,6 +78,17 @@ func main() {
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
 
+	// Initialize rate limiters (4-tier strategy)
+	strictRL := middleware.NewRateLimiter(5, time.Minute)    // Auth endpoints: 5 req/min
+	moderateRL := middleware.NewRateLimiter(20, time.Minute) // Financial endpoints: 20 req/min
+	standardRL := middleware.NewRateLimiter(60, time.Minute) // General endpoints: 60 req/min
+
+	log.Println("🛡️  Rate limiters initialized:")
+	log.Println("   🔴 Strict:   5 req/min  (login, forgot/reset password)")
+	log.Println("   🟠 Moderate: 20 req/min (orders, payments, validation)")
+	log.Println("   🟡 Standard: 60 req/min (general API endpoints)")
+	log.Println("   🟢 Relaxed:  unlimited  (webhooks, health)")
+
 	// Setup router
 	mux := http.NewServeMux()
 
@@ -109,41 +120,41 @@ func main() {
 	// PUBLIC ROUTES (No auth required)
 	// ==========================================
 
-	// Product endpoints
-	mux.HandleFunc("GET /api/v1/products", productHandler.GetProducts)
-	mux.HandleFunc("GET /api/v1/products/filters", productHandler.GetFilters)
-	mux.HandleFunc("GET /api/v1/products/categories", productHandler.GetCategories)
-	mux.HandleFunc("GET /api/v1/products/brands", productHandler.GetBrands)
-	mux.HandleFunc("GET /api/v1/products/{sku}", productHandler.GetProductBySKU)
+	// Product endpoints (Standard: 60 req/min)
+	mux.HandleFunc("GET /api/v1/products", standardRL.Limit(productHandler.GetProducts))
+	mux.HandleFunc("GET /api/v1/products/filters", standardRL.Limit(productHandler.GetFilters))
+	mux.HandleFunc("GET /api/v1/products/categories", standardRL.Limit(productHandler.GetCategories))
+	mux.HandleFunc("GET /api/v1/products/brands", standardRL.Limit(productHandler.GetBrands))
+	mux.HandleFunc("GET /api/v1/products/{sku}", standardRL.Limit(productHandler.GetProductBySKU))
 
-	// Content endpoints (Public)
-	mux.HandleFunc("GET /api/v1/content/carousel", contentHandler.GetCarousel)
-	mux.HandleFunc("GET /api/v1/content/brands", contentHandler.GetBrandImages)
-	mux.HandleFunc("GET /api/v1/content/popup", contentHandler.GetPopup)
-	mux.HandleFunc("GET /api/v1/brands/{brand}", contentHandler.GetPublicBrandSetting)
+	// Content endpoints (Standard: 60 req/min)
+	mux.HandleFunc("GET /api/v1/content/carousel", standardRL.Limit(contentHandler.GetCarousel))
+	mux.HandleFunc("GET /api/v1/content/brands", standardRL.Limit(contentHandler.GetBrandImages))
+	mux.HandleFunc("GET /api/v1/content/popup", standardRL.Limit(contentHandler.GetPopup))
+	mux.HandleFunc("GET /api/v1/brands/{brand}", standardRL.Limit(contentHandler.GetPublicBrandSetting))
 
-	// Validation endpoints
-	mux.HandleFunc("POST /api/v1/validate-account", validationHandler.ValidateAccount)
-	mux.HandleFunc("POST /api/v1/calculate-price", validationHandler.CalculatePrice)
+	// Validation endpoints (Moderate: 20 req/min)
+	mux.HandleFunc("POST /api/v1/validate-account", moderateRL.Limit(validationHandler.ValidateAccount))
+	mux.HandleFunc("POST /api/v1/calculate-price", moderateRL.Limit(validationHandler.CalculatePrice))
 
-	// Order endpoints
-	mux.HandleFunc("POST /api/v1/orders", orderHandler.CreateOrder)
-	mux.HandleFunc("GET /api/v1/orders/{id}", orderHandler.GetOrder)
-	mux.HandleFunc("POST /api/v1/orders/{id}/pay", orderHandler.InitiatePayment)
-	mux.HandleFunc("POST /api/v1/orders/{id}/cancel", orderHandler.CancelOrder)
-	mux.HandleFunc("GET /api/v1/orders/{id}/status", orderHandler.GetOrderStatus)
-	mux.HandleFunc("GET /api/v1/orders/track", orderHandler.TrackOrders)
+	// Order endpoints (Moderate for writes, Standard for reads)
+	mux.HandleFunc("POST /api/v1/orders", moderateRL.Limit(orderHandler.CreateOrder))
+	mux.HandleFunc("GET /api/v1/orders/{id}", standardRL.Limit(orderHandler.GetOrder))
+	mux.HandleFunc("POST /api/v1/orders/{id}/pay", moderateRL.Limit(orderHandler.InitiatePayment))
+	mux.HandleFunc("POST /api/v1/orders/{id}/cancel", moderateRL.Limit(orderHandler.CancelOrder))
+	mux.HandleFunc("GET /api/v1/orders/{id}/status", standardRL.Limit(orderHandler.GetOrderStatus))
+	mux.HandleFunc("GET /api/v1/orders/track", standardRL.Limit(orderHandler.TrackOrders))
 
-	// Payment methods
-	mux.HandleFunc("GET /api/v1/payment-methods", orderHandler.GetPaymentMethods)
+	// Payment methods (Standard: 60 req/min)
+	mux.HandleFunc("GET /api/v1/payment-methods", standardRL.Limit(orderHandler.GetPaymentMethods))
 
-	// Admin Auth (Public)
-	mux.HandleFunc("POST /api/v1/admin/login", adminHandler.Login)
+	// Admin Auth (Strict: 5 req/min)
+	mux.HandleFunc("POST /api/v1/admin/login", strictRL.Limit(adminHandler.Login))
 
-	// Member Auth (Public)
-	mux.HandleFunc("POST /api/v1/member/login", memberHandler.Login)
-	mux.HandleFunc("POST /api/v1/member/forgot-password", memberHandler.ForgotPassword)
-	mux.HandleFunc("POST /api/v1/member/reset-password", memberHandler.ResetPassword)
+	// Member Auth (Strict: 5 req/min)
+	mux.HandleFunc("POST /api/v1/member/login", strictRL.Limit(memberHandler.Login))
+	mux.HandleFunc("POST /api/v1/member/forgot-password", strictRL.Limit(memberHandler.ForgotPassword))
+	mux.HandleFunc("POST /api/v1/member/reset-password", strictRL.Limit(memberHandler.ResetPassword))
 
 	// ==========================================
 	// WEBHOOK ROUTES
@@ -154,70 +165,70 @@ func main() {
 	// ==========================================
 	// ADMIN ROUTES (Protected with Auth Middleware)
 	// ==========================================
-	mux.HandleFunc("GET /api/v1/admin/balance", authMiddleware.AdminAuth(adminHandler.GetBalance))
-	mux.HandleFunc("GET /api/v1/admin/dashboard", authMiddleware.AdminAuth(adminHandler.GetDashboard))
-	mux.HandleFunc("GET /api/v1/admin/orders", authMiddleware.AdminAuth(adminHandler.GetOrders))
-	mux.HandleFunc("POST /api/v1/admin/orders/{id}/check-status", authMiddleware.AdminAuth(adminHandler.CheckOrderStatus))
-	mux.HandleFunc("POST /api/v1/admin/sync/products", authMiddleware.AdminAuth(adminHandler.SyncProducts))
-	mux.HandleFunc("GET /api/v1/admin/logs/sync", authMiddleware.AdminAuth(adminHandler.GetSyncLogs))
-	mux.HandleFunc("GET /api/v1/admin/logs/webhook", authMiddleware.AdminAuth(adminHandler.GetWebhookLogs))
+	mux.HandleFunc("GET /api/v1/admin/balance", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetBalance)))
+	mux.HandleFunc("GET /api/v1/admin/dashboard", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetDashboard)))
+	mux.HandleFunc("GET /api/v1/admin/orders", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetOrders)))
+	mux.HandleFunc("POST /api/v1/admin/orders/{id}/check-status", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.CheckOrderStatus)))
+	mux.HandleFunc("POST /api/v1/admin/sync/products", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.SyncProducts)))
+	mux.HandleFunc("GET /api/v1/admin/logs/sync", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetSyncLogs)))
+	mux.HandleFunc("GET /api/v1/admin/logs/webhook", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetWebhookLogs)))
 
 	// Admin Product CRUD
-	mux.HandleFunc("GET /api/v1/admin/products", authMiddleware.AdminAuth(adminHandler.GetAdminProducts))
-	mux.HandleFunc("GET /api/v1/admin/products/filters", authMiddleware.AdminAuth(adminHandler.GetProductFilters))
-	mux.HandleFunc("GET /api/v1/admin/products/tags", authMiddleware.AdminAuth(adminHandler.GetAllTags))
-	mux.HandleFunc("GET /api/v1/admin/products/best-sellers", authMiddleware.AdminAuth(adminHandler.GetBestSellers))
-	mux.HandleFunc("GET /api/v1/admin/products/{sku}", authMiddleware.AdminAuth(adminHandler.GetAdminProduct))
-	mux.HandleFunc("PUT /api/v1/admin/products/{sku}", authMiddleware.AdminAuth(adminHandler.UpdateAdminProduct))
-	mux.HandleFunc("PUT /api/v1/admin/products/{sku}/image", authMiddleware.AdminAuth(adminHandler.UpdateProductImage))
-	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/image", authMiddleware.AdminAuth(adminHandler.DeleteProductImage))
-	mux.HandleFunc("POST /api/v1/admin/products/{sku}/tags", authMiddleware.AdminAuth(adminHandler.AddProductTag))
-	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/tags/{tag}", authMiddleware.AdminAuth(adminHandler.RemoveProductTag))
+	mux.HandleFunc("GET /api/v1/admin/products", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetAdminProducts)))
+	mux.HandleFunc("GET /api/v1/admin/products/filters", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetProductFilters)))
+	mux.HandleFunc("GET /api/v1/admin/products/tags", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetAllTags)))
+	mux.HandleFunc("GET /api/v1/admin/products/best-sellers", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetBestSellers)))
+	mux.HandleFunc("GET /api/v1/admin/products/{sku}", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.GetAdminProduct)))
+	mux.HandleFunc("PUT /api/v1/admin/products/{sku}", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.UpdateAdminProduct)))
+	mux.HandleFunc("PUT /api/v1/admin/products/{sku}/image", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.UpdateProductImage)))
+	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/image", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.DeleteProductImage)))
+	mux.HandleFunc("POST /api/v1/admin/products/{sku}/tags", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.AddProductTag)))
+	mux.HandleFunc("DELETE /api/v1/admin/products/{sku}/tags/{tag}", standardRL.Limit(authMiddleware.AdminAuth(adminHandler.RemoveProductTag)))
 
 	// Admin Content CRUD
-	mux.HandleFunc("GET /api/v1/admin/content", authMiddleware.AdminAuth(contentHandler.GetAllContent))
-	mux.HandleFunc("GET /api/v1/admin/content/{id}", authMiddleware.AdminAuth(contentHandler.GetContentByID))
-	mux.HandleFunc("POST /api/v1/admin/content", authMiddleware.AdminAuth(contentHandler.CreateContent))
-	mux.HandleFunc("PUT /api/v1/admin/content/{id}", authMiddleware.AdminAuth(contentHandler.UpdateContent))
-	mux.HandleFunc("DELETE /api/v1/admin/content/{id}", authMiddleware.AdminAuth(contentHandler.DeleteContent))
+	mux.HandleFunc("GET /api/v1/admin/content", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.GetAllContent)))
+	mux.HandleFunc("GET /api/v1/admin/content/{id}", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.GetContentByID)))
+	mux.HandleFunc("POST /api/v1/admin/content", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.CreateContent)))
+	mux.HandleFunc("PUT /api/v1/admin/content/{id}", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.UpdateContent)))
+	mux.HandleFunc("DELETE /api/v1/admin/content/{id}", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.DeleteContent)))
 
 	// Admin Brand Settings
-	mux.HandleFunc("GET /api/v1/admin/brands", authMiddleware.AdminAuth(contentHandler.GetBrandSettings))
-	mux.HandleFunc("PUT /api/v1/admin/brands/{brand}", authMiddleware.AdminAuth(contentHandler.UpdateBrandSetting))
+	mux.HandleFunc("GET /api/v1/admin/brands", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.GetBrandSettings)))
+	mux.HandleFunc("PUT /api/v1/admin/brands/{brand}", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.UpdateBrandSetting)))
 
 	// Admin TOTP / 2FA Security
-	mux.HandleFunc("GET /api/v1/admin/totp/status", authMiddleware.AdminAuth(totpHandler.GetTOTPStatus))
-	mux.HandleFunc("POST /api/v1/admin/totp/setup", authMiddleware.AdminAuth(totpHandler.SetupTOTP))
-	mux.HandleFunc("POST /api/v1/admin/totp/enable", authMiddleware.AdminAuth(totpHandler.EnableTOTP))
-	mux.HandleFunc("POST /api/v1/admin/totp/disable", authMiddleware.AdminAuth(totpHandler.DisableTOTP))
+	mux.HandleFunc("GET /api/v1/admin/totp/status", standardRL.Limit(authMiddleware.AdminAuth(totpHandler.GetTOTPStatus)))
+	mux.HandleFunc("POST /api/v1/admin/totp/setup", standardRL.Limit(authMiddleware.AdminAuth(totpHandler.SetupTOTP)))
+	mux.HandleFunc("POST /api/v1/admin/totp/enable", standardRL.Limit(authMiddleware.AdminAuth(totpHandler.EnableTOTP)))
+	mux.HandleFunc("POST /api/v1/admin/totp/disable", standardRL.Limit(authMiddleware.AdminAuth(totpHandler.DisableTOTP)))
 
 	// Admin Manual Topup (requires TOTP verification)
-	mux.HandleFunc("POST /api/v1/admin/orders/{id}/manual-topup", authMiddleware.AdminAuth(totpHandler.ManualTopup))
+	mux.HandleFunc("POST /api/v1/admin/orders/{id}/manual-topup", moderateRL.Limit(authMiddleware.AdminAuth(totpHandler.ManualTopup)))
 
 	// Admin Custom Topup (for cash/gift - requires password + TOTP)
-	mux.HandleFunc("POST /api/v1/admin/topup/custom", authMiddleware.AdminAuth(totpHandler.CustomTopup))
+	mux.HandleFunc("POST /api/v1/admin/topup/custom", moderateRL.Limit(authMiddleware.AdminAuth(totpHandler.CustomTopup)))
 
 	// Admin Member Management
-	mux.HandleFunc("GET /api/v1/admin/members", authMiddleware.AdminAuth(memberHandler.GetMembers))
-	mux.HandleFunc("POST /api/v1/admin/members", authMiddleware.AdminAuth(memberHandler.CreateMember))
-	mux.HandleFunc("GET /api/v1/admin/members/{id}", authMiddleware.AdminAuth(memberHandler.GetMember))
-	mux.HandleFunc("PUT /api/v1/admin/members/{id}", authMiddleware.AdminAuth(memberHandler.UpdateMember))
-	mux.HandleFunc("DELETE /api/v1/admin/members/{id}", authMiddleware.AdminAuth(memberHandler.DeleteMember))
-	mux.HandleFunc("POST /api/v1/admin/members/{id}/topup", authMiddleware.AdminAuth(memberHandler.TopupMember))
+	mux.HandleFunc("GET /api/v1/admin/members", standardRL.Limit(authMiddleware.AdminAuth(memberHandler.GetMembers)))
+	mux.HandleFunc("POST /api/v1/admin/members", standardRL.Limit(authMiddleware.AdminAuth(memberHandler.CreateMember)))
+	mux.HandleFunc("GET /api/v1/admin/members/{id}", standardRL.Limit(authMiddleware.AdminAuth(memberHandler.GetMember)))
+	mux.HandleFunc("PUT /api/v1/admin/members/{id}", standardRL.Limit(authMiddleware.AdminAuth(memberHandler.UpdateMember)))
+	mux.HandleFunc("DELETE /api/v1/admin/members/{id}", standardRL.Limit(authMiddleware.AdminAuth(memberHandler.DeleteMember)))
+	mux.HandleFunc("POST /api/v1/admin/members/{id}/topup", moderateRL.Limit(authMiddleware.AdminAuth(memberHandler.TopupMember)))
 
 	// ==========================================
 	// MEMBER ROUTES (Protected with Member Auth Middleware)
 	// ==========================================
-	mux.HandleFunc("GET /api/v1/member/dashboard", authMiddleware.MemberAuth(memberHandler.GetDashboard))
-	mux.HandleFunc("GET /api/v1/member/profile", authMiddleware.MemberAuth(memberHandler.GetProfile))
-	mux.HandleFunc("PUT /api/v1/member/profile", authMiddleware.MemberAuth(memberHandler.UpdateProfile))
-	mux.HandleFunc("GET /api/v1/member/deposits", authMiddleware.MemberAuth(memberHandler.GetDeposits))
-	mux.HandleFunc("GET /api/v1/member/products", authMiddleware.MemberAuth(memberHandler.GetProducts))
-	mux.HandleFunc("GET /api/v1/member/products/{sku}", authMiddleware.MemberAuth(memberHandler.GetProductBySku))
-	mux.HandleFunc("GET /api/v1/member/orders", authMiddleware.MemberAuth(memberHandler.GetOrders))
-	mux.HandleFunc("GET /api/v1/member/orders/{id}", authMiddleware.MemberAuth(memberHandler.GetOrderByID))
-	mux.HandleFunc("POST /api/v1/member/orders", authMiddleware.MemberAuth(memberHandler.CreateOrder))
-	mux.HandleFunc("PUT /api/v1/member/password", authMiddleware.MemberAuth(memberHandler.ChangePassword))
+	mux.HandleFunc("GET /api/v1/member/dashboard", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetDashboard)))
+	mux.HandleFunc("GET /api/v1/member/profile", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetProfile)))
+	mux.HandleFunc("PUT /api/v1/member/profile", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.UpdateProfile)))
+	mux.HandleFunc("GET /api/v1/member/deposits", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetDeposits)))
+	mux.HandleFunc("GET /api/v1/member/products", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetProducts)))
+	mux.HandleFunc("GET /api/v1/member/products/{sku}", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetProductBySku)))
+	mux.HandleFunc("GET /api/v1/member/orders", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetOrders)))
+	mux.HandleFunc("GET /api/v1/member/orders/{id}", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetOrderByID)))
+	mux.HandleFunc("POST /api/v1/member/orders", moderateRL.Limit(authMiddleware.MemberAuth(memberHandler.CreateOrder)))
+	mux.HandleFunc("PUT /api/v1/member/password", strictRL.Limit(authMiddleware.MemberAuth(memberHandler.ChangePassword)))
 
 	// Apply middleware to API routes
 	var apiHandler http.Handler = mux

@@ -142,9 +142,9 @@ func (h *MemberHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always return success (don't reveal if email exists)
+	// Return error if email not found
 	if user == nil {
-		Success(w, "Jika email terdaftar, link reset password akan dikirim.", nil)
+		NotFound(w, "Email tidak ditemukan")
 		return
 	}
 
@@ -174,7 +174,7 @@ func (h *MemberHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	Success(w, "Jika email terdaftar, link reset password akan dikirim.", nil)
+	Success(w, "Link reset password telah dikirim ke email Anda.", nil)
 }
 
 // ResetPassword handles POST /api/v1/member/reset-password
