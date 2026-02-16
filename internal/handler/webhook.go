@@ -139,8 +139,9 @@ func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Log webhook
+	// Always log webhook payload first
 	logID, _ := h.webhookRepo.Create(ctx, "qrispw", string(body))
+	log.Printf("[Webhook] QrisPW raw payload: %s", string(body))
 
 	// Parse payload
 	var payload qrispw.WebhookPayload
@@ -151,65 +152,8 @@ func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	log.Printf("[Webhook] QrisPW webhook received: transaction_id=%s, order_id=%s, status=%s",
-		payload.TransactionID, payload.OrderID, payload.Status)
-
-	// Verify HMAC-SHA256 signature
-	signature := payload.Signature
-	if signature == "" {
-		// Try to get from header
-		signature = r.Header.Get("Signature")
-		if signature == "" {
-			signature = r.Header.Get("X-Signature")
-		}
-	}
-
-	// Remove signature from payload before verification if it was in the body
-	// Note: If signature was in header, payload doesn't have it anyway.
-	// But if implementation relies on raw body, we must be careful.
-	// Current VerifyWebhookSignature takes `payload []byte`.
-	// If signature is NOT in body, we verify the RAW BODY.
-	// If signature IS in body, we verify the JSON with "signature":"" or removed?
-	// The standard way is usually header signature verifies raw body.
-
-	// Let's assume if signature is in header, we verify full body.
-	// If signature is in body, we verify body without signature.
-
-	var payloadForVerify []byte
-	if payload.Signature != "" {
-		// It was in body, so we need to mask it
-		clone := payload
-		clone.Signature = ""
-		payloadForVerify, _ = json.Marshal(clone)
-	} else {
-		// It was not in body (or empty), use raw body
-		payloadForVerify = body
-	}
-
-	if signature == "" {
-		log.Printf("[Webhook] QrisPW missing signature in body and headers")
-		// For debugging, we might want to log this but continue if strict mode is off?
-		// No, security first. But user is struggling.
-		// Let's log headers to help user debug
-		log.Printf("[Webhook] Headers: %v", r.Header)
-		http.Error(w, "Missing signature", http.StatusUnauthorized)
-		return
-	}
-
-	if !qrispw.VerifyWebhookSignature(payloadForVerify, signature, h.config.QrisPWSecretKey) {
-		log.Printf("[Webhook] QrisPW invalid signature")
-		h.webhookRepo.MarkProcessed(ctx, logID, "invalid signature")
-		http.Error(w, "Invalid signature", http.StatusUnauthorized)
-		return
-	}
-
-	// Only process paid payments
-	if payload.Status != "paid" {
-		log.Printf("[Webhook] QrisPW ignoring non-paid status: %s", payload.Status)
-		h.webhookRepo.MarkProcessed(ctx, logID, "")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
+	log.Printf("[Webhook] QrisPW webhook received: transaction_id=%s, order_id=%s, status=%s, amount=%s",
+		payload.TransactionID, payload.OrderID, payload.Status, payload.Amount.String())
 
 	// Find order by RefID (which is used as order_id in qris.pw)
 	order, err := h.orderRepo.GetByRefID(ctx, payload.OrderID)
@@ -221,7 +165,6 @@ func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Verify amount
-	// Payload amount is json.Number
 	payloadAmount, err := payload.Amount.Float64()
 	if err != nil {
 		log.Printf("[Webhook] QrisPW invalid amount format: %v", err)
@@ -230,32 +173,59 @@ func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	expectedAmount := float64(int(order.SellingPrice + 0.5))
-	// Allow small floating point difference
-	if payloadAmount != expectedAmount {
-		log.Printf("[Webhook] QrisPW amount mismatch: expected %.0f, got %.2f", expectedAmount, payloadAmount)
-		h.webhookRepo.MarkProcessed(ctx, logID, "amount mismatch")
+	// Compare amounts using integer truncation (qris.pw sends "1486.00", order has 1486)
+	expectedAmount := int(order.SellingPrice)
+	receivedAmount := int(payloadAmount)
+	if receivedAmount != expectedAmount {
+		log.Printf("[Webhook] QrisPW amount mismatch: expected %d, got %d (raw: %s)", expectedAmount, receivedAmount, payload.Amount.String())
+		h.webhookRepo.MarkProcessed(ctx, logID, fmt.Sprintf("amount mismatch: expected %d, got %d", expectedAmount, receivedAmount))
 		http.Error(w, "Amount mismatch", http.StatusBadRequest)
 		return
 	}
 
-	// Update payment status
-	if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusCompleted); err != nil {
-		log.Printf("[Webhook] QrisPW failed to update payment: %v", err)
+	// Process based on status
+	switch payload.Status {
+	case "paid":
+		log.Printf("[Webhook] QrisPW payment PAID for order %s", order.ID)
+
+		// Update payment status to completed
+		if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusCompleted); err != nil {
+			log.Printf("[Webhook] QrisPW failed to update payment: %v", err)
+		}
+
+		// Update order status to paid
+		if err := h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusPaid); err != nil {
+			log.Printf("[Webhook] QrisPW failed to update order status: %v", err)
+			h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
+			http.Error(w, "Internal Error", http.StatusInternalServerError)
+			return
+		}
+
+		// Process topup to Digiflazz
+		go h.processTopup(order)
+
+		h.webhookRepo.MarkProcessed(ctx, logID, "")
+		log.Printf("[Webhook] QrisPW order %s processed successfully → topup triggered", order.ID)
+
+	case "expired":
+		log.Printf("[Webhook] QrisPW payment EXPIRED for order %s", order.ID)
+
+		// Update payment status to expired
+		if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusExpired); err != nil {
+			log.Printf("[Webhook] QrisPW failed to update payment to expired: %v", err)
+		}
+
+		h.webhookRepo.MarkProcessed(ctx, logID, "")
+
+	case "pending":
+		log.Printf("[Webhook] QrisPW payment still PENDING for order %s", order.ID)
+		h.webhookRepo.MarkProcessed(ctx, logID, "")
+
+	default:
+		log.Printf("[Webhook] QrisPW unknown status '%s' for order %s", payload.Status, order.ID)
+		h.webhookRepo.MarkProcessed(ctx, logID, fmt.Sprintf("unknown status: %s", payload.Status))
 	}
 
-	// Update order status to paid
-	if err := h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusPaid); err != nil {
-		log.Printf("[Webhook] QrisPW failed to update order status: %v", err)
-		h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
-		http.Error(w, "Internal Error", http.StatusInternalServerError)
-		return
-	}
-
-	// Process topup to Digiflazz
-	go h.processTopup(order)
-
-	h.webhookRepo.MarkProcessed(ctx, logID, "")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }

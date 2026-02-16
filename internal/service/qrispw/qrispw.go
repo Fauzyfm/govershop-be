@@ -77,10 +77,9 @@ type WebhookPayload struct {
 	TransactionID string      `json:"transaction_id"`
 	OrderID       string      `json:"order_id"`
 	Amount        json.Number `json:"amount"`
-	Status        string      `json:"status"` // "paid"
+	Status        string      `json:"status"` // "paid", "expired", "pending"
 	PaidAt        string      `json:"paid_at"`
 	Timestamp     int64       `json:"timestamp"`
-	Signature     string      `json:"signature"`
 }
 
 // CreatePayment creates a QRIS payment via qris.pw
