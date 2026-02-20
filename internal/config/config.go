@@ -56,6 +56,10 @@ type Config struct {
 
 	// Frontend
 	FrontendURL string
+
+	// Admin Alert
+	AdminAlertEmail string
+	AdminWhatsApp   string
 }
 
 // Global config instance
@@ -115,6 +119,10 @@ func Load() *Config {
 
 		// Frontend
 		FrontendURL: getEnv("FRONTEND_URL", "http://localhost:3000"),
+
+		// Admin Alert
+		AdminAlertEmail: getEnv("ADMIN_ALERT_EMAIL", ""),
+		AdminWhatsApp:   getEnv("ADMIN_WHATSAPP", ""),
 	}
 
 	AppConfig = config

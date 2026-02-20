@@ -11,6 +11,7 @@ import (
 	"govershop-api/internal/model"
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
+	"govershop-api/internal/service/email"
 	"govershop-api/internal/service/pakasir"
 	"govershop-api/internal/service/qrispw"
 )
@@ -24,6 +25,7 @@ type OrderHandler struct {
 	digiflazzSvc *digiflazz.Service
 	pakasirSvc   *pakasir.Service
 	qrispwSvc    *qrispw.Service
+	emailSvc     *email.Service
 }
 
 // NewOrderHandler creates a new OrderHandler
@@ -35,6 +37,7 @@ func NewOrderHandler(
 	digiflazzSvc *digiflazz.Service,
 	pakasirSvc *pakasir.Service,
 	qrispwSvc *qrispw.Service,
+	emailSvc *email.Service,
 ) *OrderHandler {
 	return &OrderHandler{
 		config:       cfg,
@@ -44,6 +47,7 @@ func NewOrderHandler(
 		digiflazzSvc: digiflazzSvc,
 		pakasirSvc:   pakasirSvc,
 		qrispwSvc:    qrispwSvc,
+		emailSvc:     emailSvc,
 	}
 }
 
@@ -77,6 +81,53 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	if !product.IsAvailable {
 		BadRequest(w, "Produk sedang tidak tersedia")
 		return
+	}
+
+	// ============================================================
+	// CHECK DIGIFLAZZ BALANCE (cached, fail-open strategy)
+	// ============================================================
+	balance, _, balanceErr := h.digiflazzSvc.GetCachedBalance()
+	if balanceErr == nil {
+		// Balance check successful - compare with buy price (modal)
+		if balance < product.BuyPrice {
+			deficit := product.BuyPrice - balance
+			log.Printf("[CreateOrder] ❌ Saldo Digiflazz kurang! Saldo: %.0f, Buy Price: %.0f, Deficit: %.0f, Product: %s",
+				balance, product.BuyPrice, deficit, product.ProductName)
+
+			// Send admin email alert asynchronously
+			if h.config.AdminAlertEmail != "" {
+				go func() {
+					now := time.Now()
+					alertData := email.BalanceAlertData{
+						Date:           now.Format("02 January 2006"),
+						Time:           now.Format("15:04") + " WIB",
+						ProductName:    product.ProductName,
+						ProductSKU:     product.BuyerSKUCode,
+						CustomerPhone:  req.CustomerPhone,
+						CustomerEmail:  req.CustomerEmail,
+						BuyPrice:       product.BuyPrice,
+						CurrentBalance: balance,
+						Deficit:        deficit,
+					}
+					if err := h.emailSvc.SendAdminBalanceAlert(h.config.AdminAlertEmail, alertData); err != nil {
+						log.Printf("[CreateOrder] ❌ Failed to send admin alert email: %v", err)
+					} else {
+						log.Printf("[CreateOrder] 📧 Admin alert email sent to %s", h.config.AdminAlertEmail)
+					}
+				}()
+			}
+
+			// Return specific error code for frontend to handle
+			JSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+				"success": false,
+				"error":   "Maaf, saat ini sedang ada kendala teknis untuk topup produk ini.",
+				"code":    "INSUFFICIENT_PROVIDER_BALANCE",
+			})
+			return
+		}
+	} else {
+		// Balance check failed - fail-open: allow the order to proceed
+		log.Printf("[CreateOrder] ⚠️ Balance check failed (fail-open, allowing order): %v", balanceErr)
 	}
 
 	// Generate unique ref_id for Digiflazz

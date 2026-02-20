@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"govershop-api/internal/config"
@@ -19,12 +21,21 @@ const (
 	EndpointBalance   = "/cek-saldo"
 	EndpointPriceList = "/price-list"
 	EndpointTransact  = "/transaction"
+
+	// Cache TTL for balance check (2 minutes)
+	BalanceCacheTTL = 2 * time.Minute
 )
 
 // Service handles all Digiflazz API interactions
 type Service struct {
 	config     *config.Config
 	httpClient *http.Client
+
+	// Cached balance
+	mu             sync.Mutex
+	cachedBalance  float64
+	cacheTime      time.Time
+	hasCachedValue bool
 }
 
 // NewService creates a new Digiflazz service
@@ -35,6 +46,38 @@ func NewService(cfg *config.Config) *Service {
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// GetCachedBalance returns the Digiflazz balance, using a cached value if fresh (< 2 min).
+// Returns (balance, fromCache, error). If API fails but cache exists, returns last known value.
+func (s *Service) GetCachedBalance() (float64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Return cached value if still fresh
+	if s.hasCachedValue && time.Since(s.cacheTime) < BalanceCacheTTL {
+		return s.cachedBalance, true, nil
+	}
+
+	// Fetch fresh balance from API
+	resp, err := s.CheckBalance()
+	if err != nil {
+		log.Printf("[DigiflazzBalance] Failed to fetch balance: %v", err)
+		// If we have a stale cached value, return it with error flag
+		if s.hasCachedValue {
+			log.Printf("[DigiflazzBalance] Using stale cached balance: %.0f", s.cachedBalance)
+			return s.cachedBalance, true, fmt.Errorf("using stale cache: %w", err)
+		}
+		return 0, false, err
+	}
+
+	// Update cache
+	s.cachedBalance = resp.Data.Deposit
+	s.cacheTime = time.Now()
+	s.hasCachedValue = true
+
+	log.Printf("[DigiflazzBalance] Fresh balance fetched: %.0f", s.cachedBalance)
+	return s.cachedBalance, false, nil
 }
 
 // GenerateSignature generates MD5 signature for API requests
