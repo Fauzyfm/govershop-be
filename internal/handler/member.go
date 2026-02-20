@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"govershop-api/internal/config"
@@ -520,6 +521,163 @@ func (h *MemberHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 			"status":   order.Status,
 			"balance":  user.Balance,
 		},
+	})
+}
+
+// ValidateMemberAccount handles POST /api/v1/member/validate-account
+// Deducts balance for validation, refunds if Digiflazz fails.
+func (h *MemberHandler) ValidateMemberAccount(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	userID := ctx.Value("user_id").(int)
+
+	var req struct {
+		Brand      string `json:"brand"`
+		CustomerNo string `json:"customer_no"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		BadRequest(w, "Format request tidak valid")
+		return
+	}
+
+	if req.Brand == "" {
+		BadRequest(w, "brand wajib diisi")
+		return
+	}
+	if req.CustomerNo == "" {
+		BadRequest(w, "customer_no wajib diisi")
+		return
+	}
+
+	brandSlug := strings.ToLower(strings.ReplaceAll(req.Brand, " ", ""))
+	checkUserSKU := fmt.Sprintf("checkuser%s", brandSlug)
+
+	checkProduct, err := h.productRepo.GetBySKU(ctx, checkUserSKU)
+	if err != nil || !checkProduct.IsAvailable {
+		// Manual validation, no fee
+		Success(w, "Validasi manual", map[string]interface{}{
+			"is_valid":       true,
+			"account_name":   "",
+			"customer_no":    req.CustomerNo,
+			"brand":          req.Brand,
+			"message":        "Pastikan User ID sesuai. Kesalahan input diluar tanggung jawab kami.",
+			"validation_fee": 0,
+		})
+		return
+	}
+
+	// Calculate member price
+	defaultMarkup := 0.0
+	respData := checkProduct.ToMemberResponse(defaultMarkup)
+	validationFee := respData.Price
+
+	// Generate RefID
+	refID := fmt.Sprintf("MVAL-%d-%s", time.Now().UnixMilli(), generateRandomString(4))
+
+	// 1. Deduct balance first
+	description := fmt.Sprintf("Check User %s - %s", req.Brand, req.CustomerNo)
+	if err := h.userRepo.DeductBalance(ctx, userID, validationFee, description, refID); err != nil {
+		if err.Error() == "insufficient balance" {
+			BadRequest(w, "Saldo tidak mencukupi untuk melakukan pengecekan ID")
+		} else {
+			InternalError(w, "Gagal memproses transaksi pengecekan ID")
+		}
+		return
+	}
+
+	// 2. Create Pending Order
+	memberID := userID
+	memberPrice := validationFee
+	order := &model.Order{
+		MemberID:     &memberID,
+		MemberPrice:  &memberPrice,
+		RefID:        refID,
+		BuyerSKUCode: checkUserSKU,
+		ProductName:  fmt.Sprintf("Check User %s", req.Brand),
+		CustomerNo:   req.CustomerNo,
+		Status:       model.OrderStatusProcessing,
+		SellingPrice: validationFee,
+		BuyPrice:     checkProduct.BuyPrice,
+		OrderSource:  "member",
+	}
+
+	if err := h.orderRepo.Create(ctx, order); err != nil {
+		// Refund since we can't save order
+		h.userRepo.TopupBalance(ctx, userID, validationFee, fmt.Sprintf("Refund Gagal System %s", refID), "SYSTEM")
+		InternalError(w, "Gagal membuat riwayat. Saldo dikembalikan.")
+		return
+	}
+
+	// 3. Call Digiflazz
+	resp, digiErr := h.digiflazzSvc.CreateTransaction(digiflazz.TopupRequest{
+		BuyerSKUCode: checkUserSKU,
+		CustomerNo:   req.CustomerNo,
+		RefID:        refID,
+		Testing:      false,
+	})
+
+	if digiErr != nil {
+		h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed)
+		h.userRepo.TopupBalance(ctx, userID, validationFee, fmt.Sprintf("Refund Gagal Provider %s", refID), "SYSTEM")
+		InternalError(w, "Gagal validasi ke provider. Saldo dikembalikan.")
+		return
+	}
+
+	// 4. Check Response
+	isValid := resp.Data.Status == "Sukses"
+	accountName := ""
+	message := resp.Data.Message
+
+	if resp.Data.Status == "Pending" {
+		maxRetries := 3
+		for i := 0; i < maxRetries; i++ {
+			time.Sleep(2 * time.Second)
+			retryResp, retryErr := h.digiflazzSvc.CreateTransaction(digiflazz.TopupRequest{
+				BuyerSKUCode: checkUserSKU,
+				CustomerNo:   req.CustomerNo,
+				RefID:        resp.Data.RefID,
+				Testing:      false,
+			})
+			if retryErr == nil && retryResp != nil {
+				if retryResp.Data.Status == "Sukses" || retryResp.Data.Status == "Gagal" {
+					isValid = retryResp.Data.Status == "Sukses"
+					message = retryResp.Data.Message
+					resp.Data = retryResp.Data
+					break
+				}
+			}
+		}
+	}
+
+	var updateStatus model.OrderStatus
+	if isValid {
+		updateStatus = model.OrderStatusSuccess
+		accountName = resp.Data.SN
+		if accountName == "" {
+			accountName = "Akun Valid (Nama tidak muncul)"
+		}
+	} else if resp.Data.Status == "Pending" {
+		updateStatus = model.OrderStatusProcessing
+	} else {
+		updateStatus = model.OrderStatusFailed
+	}
+
+	// Update order
+	h.orderRepo.UpdateStatus(ctx, order.ID, updateStatus)
+
+	// User requested: "jika check user itu gagal dari digiflazz itu sendiri tidak akan memotong saldonya"
+	// So if status is Failed (isValid == false and not pending), we refund!
+	if updateStatus == model.OrderStatusFailed {
+		refundDesc := fmt.Sprintf("Refund Invalid ID %s", refID)
+		h.userRepo.TopupBalance(ctx, userID, validationFee, refundDesc, "SYSTEM")
+	}
+
+	Success(w, "Validasi selesai", map[string]interface{}{
+		"is_valid":       isValid,
+		"account_name":   accountName,
+		"customer_no":    req.CustomerNo,
+		"brand":          req.Brand,
+		"message":        message,
+		"validation_fee": validationFee,
 	})
 }
 

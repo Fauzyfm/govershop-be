@@ -230,6 +230,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/member/orders", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetOrders)))
 	mux.HandleFunc("GET /api/v1/member/orders/{id}", standardRL.Limit(authMiddleware.MemberAuth(memberHandler.GetOrderByID)))
 	mux.HandleFunc("POST /api/v1/member/orders", moderateRL.Limit(authMiddleware.MemberAuth(memberHandler.CreateOrder)))
+	mux.HandleFunc("POST /api/v1/member/validate-account", moderateRL.Limit(authMiddleware.MemberAuth(memberHandler.ValidateMemberAccount)))
 	mux.HandleFunc("PUT /api/v1/member/password", strictRL.Limit(authMiddleware.MemberAuth(memberHandler.ChangePassword)))
 
 	// Apply middleware to API routes
