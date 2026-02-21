@@ -72,14 +72,20 @@ type CheckPaymentResponse struct {
 	Error         string `json:"error,omitempty"`
 }
 
-// WebhookPayload represents the webhook payload from qris.pw
+// WebhookPayload represents the expected webhook payload from qris.pw
 type WebhookPayload struct {
+	Event         string      `json:"event"`
 	TransactionID string      `json:"transaction_id"`
 	OrderID       string      `json:"order_id"`
-	Amount        json.Number `json:"amount"`
+	Amount        json.Number `json:"amount"` // Can be sent as int or string, using json.Number is safe
+	CustomerName  string      `json:"customer_name"`
+	CustomerPhone string      `json:"customer_phone"`
 	Status        string      `json:"status"` // "paid", "expired", "pending"
 	PaidAt        string      `json:"paid_at"`
-	Timestamp     int64       `json:"timestamp"`
+	CreatedAt     string      `json:"created_at"`
+	QRImageUrl    string      `json:"qr_image_url"`
+	MerchantID    string      `json:"merchant_id"`
+	MerchantName  string      `json:"merchant_name"`
 }
 
 // CreatePayment creates a QRIS payment via qris.pw

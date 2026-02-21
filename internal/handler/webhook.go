@@ -143,6 +143,10 @@ func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Requ
 	logID, _ := h.webhookRepo.Create(ctx, "qrispw", string(body))
 	log.Printf("[Webhook] QrisPW raw payload: %s", string(body))
 
+	// Note: Qris.pw currently does not send any signature header for validation.
+	// We rely on matching the strict parameters (TransactionID, OrderID, Amount) to authorize the webhook,
+	// as checking the specific Amount ensures no one can spoof it without knowing the exact payment amount requested.
+
 	// Parse payload
 	var payload qrispw.WebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -318,7 +322,6 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 func (h *WebhookHandler) HandleDigiflazzWebhook(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Verify IP whitelist (Digiflazz IP: 52.74.250.133)
 	// In production, uncomment this check
 	/*
 		clientIP := r.Header.Get("X-Forwarded-For")
