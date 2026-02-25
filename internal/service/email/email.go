@@ -1,11 +1,23 @@
 package email
 
 import (
+	"bytes"
+	"embed"
 	"fmt"
+	"html/template"
 	"net/smtp"
 
 	"govershop-api/internal/config"
 )
+
+//go:embed templates/*.html
+var templateFS embed.FS
+
+var templates *template.Template
+
+func init() {
+	templates = template.Must(template.ParseFS(templateFS, "templates/*.html"))
+}
 
 type Service struct {
 	config *config.Config
@@ -15,30 +27,29 @@ func NewService(cfg *config.Config) *Service {
 	return &Service{config: cfg}
 }
 
+// resetPasswordData is the data passed to reset_password.html
+type resetPasswordData struct {
+	ResetLink string
+}
+
 func (s *Service) SendResetPasswordEmail(toEmail, resetLink string) error {
 	from := s.config.SMTPFrom
 	pass := s.config.SMTPPass
 	host := s.config.SMTPHost
 	port := s.config.SMTPPort
 
-	// Basic auth
 	auth := smtp.PlainAuth("", s.config.SMTPUser, pass, host)
 
-	// Email content
-	subject := "Reset Password Govershop"
-	body := fmt.Sprintf(`
-		<html>
-		<body>
-			<h2>Reset Password</h2>
-			<p>Anda membinta untuk mereset password akun Govershop Anda.</p>
-			<p>Silakan klik link di bawah ini untuk mereset password:</p>
-			<p><a href="%s">Reset Password</a></p>
-			<p>Atau copy link ini: %s</p>
-			<p>Link ini valid selama 1 jam.</p>
-			<p>Jika Anda tidak meminta ini, abaikan saja.</p>
-		</body>
-		</html>
-	`, resetLink, resetLink)
+	subject := "Reset Password — Restopup"
+
+	data := resetPasswordData{
+		ResetLink: resetLink,
+	}
+
+	var buf bytes.Buffer
+	if err := templates.ExecuteTemplate(&buf, "reset_password.html", data); err != nil {
+		return fmt.Errorf("failed to render reset password template: %w", err)
+	}
 
 	msg := []byte("To: " + toEmail + "\r\n" +
 		"From: " + from + "\r\n" +
@@ -46,11 +57,10 @@ func (s *Service) SendResetPasswordEmail(toEmail, resetLink string) error {
 		"MIME-Version: 1.0\r\n" +
 		"Content-Type: text/html; charset=\"UTF-8\"\r\n" +
 		"\r\n" +
-		body)
+		buf.String())
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 
-	// Send email
 	if err := smtp.SendMail(addr, auth, s.config.SMTPUser, []string{toEmail}, msg); err != nil {
 		return fmt.Errorf("failed to send email: %w", err)
 	}
@@ -71,6 +81,19 @@ type BalanceAlertData struct {
 	Deficit        float64 // Kekurangan saldo
 }
 
+// balanceAlertTemplateData is the pre-formatted data passed to balance_alert.html
+type balanceAlertTemplateData struct {
+	Date           string
+	Time           string
+	ProductName    string
+	ProductSKU     string
+	CustomerPhone  string
+	CustomerEmail  string
+	BuyPrice       string
+	CurrentBalance string
+	Deficit        string
+}
+
 // SendAdminBalanceAlert sends an email to admin when Digiflazz balance is insufficient
 func (s *Service) SendAdminBalanceAlert(toEmail string, data BalanceAlertData) error {
 	from := s.config.SMTPFrom
@@ -80,61 +103,29 @@ func (s *Service) SendAdminBalanceAlert(toEmail string, data BalanceAlertData) e
 
 	auth := smtp.PlainAuth("", s.config.SMTPUser, pass, host)
 
-	subject := "⚠️ ALERT: Saldo Digiflazz Kurang - Transaksi Gagal"
+	subject := "⚠️ ALERT: Saldo Digiflazz Kurang — Transaksi Gagal"
 
 	customerEmailInfo := "-"
 	if data.CustomerEmail != "" {
 		customerEmailInfo = data.CustomerEmail
 	}
 
-	body := fmt.Sprintf(`
-		<html>
-		<body style="font-family: Arial, sans-serif; color: #333;">
-			<h2 style="color: #e74c3c;">⚠️ Saldo Digiflazz Tidak Mencukupi</h2>
-			<p>Ada customer yang <strong>gagal melakukan transaksi</strong> karena saldo Digiflazz tidak mencukupi.</p>
-			
-			<table style="border-collapse: collapse; width: 100%%; max-width: 500px;">
-				<tr>
-					<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Tanggal</td>
-					<td style="padding: 8px; border: 1px solid #ddd;">%s</td>
-				</tr>
-				<tr>
-					<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Jam</td>
-					<td style="padding: 8px; border: 1px solid #ddd;">%s</td>
-				</tr>
-				<tr>
-					<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Produk</td>
-					<td style="padding: 8px; border: 1px solid #ddd;">%s (%s)</td>
-				</tr>
-				<tr>
-					<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">No Telepon Customer</td>
-					<td style="padding: 8px; border: 1px solid #ddd;">%s</td>
-				</tr>
-				<tr>
-					<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Email Customer</td>
-					<td style="padding: 8px; border: 1px solid #ddd;">%s</td>
-				</tr>
-				<tr>
-					<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Harga Beli (Modal)</td>
-					<td style="padding: 8px; border: 1px solid #ddd;">Rp %s</td>
-				</tr>
-				<tr>
-					<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Saldo Digiflazz</td>
-					<td style="padding: 8px; border: 1px solid #ddd; color: #e74c3c;">Rp %s</td>
-				</tr>
-				<tr style="background-color: #ffeaa7;">
-					<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">Kekurangan Saldo</td>
-					<td style="padding: 8px; border: 1px solid #ddd; color: #e74c3c; font-weight: bold;">Rp %s</td>
-				</tr>
-			</table>
+	tplData := balanceAlertTemplateData{
+		Date:           data.Date,
+		Time:           data.Time,
+		ProductName:    data.ProductName,
+		ProductSKU:     data.ProductSKU,
+		CustomerPhone:  data.CustomerPhone,
+		CustomerEmail:  customerEmailInfo,
+		BuyPrice:       formatRupiah(data.BuyPrice),
+		CurrentBalance: formatRupiah(data.CurrentBalance),
+		Deficit:        formatRupiah(data.Deficit),
+	}
 
-			<p style="margin-top: 20px; color: #666;">Segera top-up saldo Digiflazz agar customer bisa melakukan transaksi.</p>
-			<hr>
-			<p style="font-size: 12px; color: #999;">Email otomatis dari sistem Govershop</p>
-		</body>
-		</html>
-	`, data.Date, data.Time, data.ProductName, data.ProductSKU, data.CustomerPhone, customerEmailInfo,
-		formatRupiah(data.BuyPrice), formatRupiah(data.CurrentBalance), formatRupiah(data.Deficit))
+	var buf bytes.Buffer
+	if err := templates.ExecuteTemplate(&buf, "balance_alert.html", tplData); err != nil {
+		return fmt.Errorf("failed to render balance alert template: %w", err)
+	}
 
 	msg := []byte("To: " + toEmail + "\r\n" +
 		"From: " + from + "\r\n" +
@@ -142,7 +133,7 @@ func (s *Service) SendAdminBalanceAlert(toEmail string, data BalanceAlertData) e
 		"MIME-Version: 1.0\r\n" +
 		"Content-Type: text/html; charset=\"UTF-8\"\r\n" +
 		"\r\n" +
-		body)
+		buf.String())
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 
@@ -155,7 +146,6 @@ func (s *Service) SendAdminBalanceAlert(toEmail string, data BalanceAlertData) e
 
 // formatRupiah formats a float64 as Indonesian Rupiah string (no decimals)
 func formatRupiah(amount float64) string {
-	// Simple formatting with thousand separators
 	intAmount := int64(amount)
 	if intAmount == 0 {
 		return "0"
@@ -167,7 +157,6 @@ func formatRupiah(amount float64) string {
 		intAmount = -intAmount
 	}
 
-	// Convert to string with dots as thousand separator
 	str := fmt.Sprintf("%d", intAmount)
 	n := len(str)
 	if n <= 3 {
@@ -177,7 +166,6 @@ func formatRupiah(amount float64) string {
 		return str
 	}
 
-	// Insert dots
 	var result []byte
 	for i, c := range str {
 		if i > 0 && (n-i)%3 == 0 {

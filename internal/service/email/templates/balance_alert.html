@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="id">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#0f0f14;font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#e0e0e0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#0f0f14;padding:40px 20px;">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background-color:#1a1b26;border-radius:16px;overflow:hidden;border:1px solid rgba(231,76,60,0.3);">
+
+<!-- Header -->
+<tr><td style="background:linear-gradient(135deg,#2d0f0a 0%,#3d1008 50%,#1a1b26 100%);padding:32px 32px 24px;text-align:center;">
+<h1 style="margin:0;font-size:22px;font-weight:700;color:#e74c3c;">&#9888;&#65039; Saldo Tidak Mencukupi</h1>
+<p style="margin:8px 0 0;font-size:13px;color:rgba(255,255,255,0.5);">Restopup System Alert</p>
+</td></tr>
+
+<!-- Body -->
+<tr><td style="padding:32px;">
+<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#c8c8d0;">Ada customer yang <strong style="color:#e74c3c;">gagal melakukan transaksi</strong> karena saldo Digiflazz tidak mencukupi:</p>
+
+<!-- Data Table -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,0.08);">
+<tr>
+<td style="padding:12px 16px;background-color:rgba(255,255,255,0.03);font-size:13px;color:rgba(255,255,255,0.5);font-weight:600;width:40%;border-bottom:1px solid rgba(255,255,255,0.06);">Tanggal</td>
+<td style="padding:12px 16px;background-color:rgba(255,255,255,0.03);font-size:14px;color:#ffffff;border-bottom:1px solid rgba(255,255,255,0.06);">{{.Date}}</td>
+</tr>
+<tr>
+<td style="padding:12px 16px;font-size:13px;color:rgba(255,255,255,0.5);font-weight:600;border-bottom:1px solid rgba(255,255,255,0.06);">Jam</td>
+<td style="padding:12px 16px;font-size:14px;color:#ffffff;border-bottom:1px solid rgba(255,255,255,0.06);">{{.Time}}</td>
+</tr>
+<tr>
+<td style="padding:12px 16px;background-color:rgba(255,255,255,0.03);font-size:13px;color:rgba(255,255,255,0.5);font-weight:600;border-bottom:1px solid rgba(255,255,255,0.06);">Produk</td>
+<td style="padding:12px 16px;background-color:rgba(255,255,255,0.03);font-size:14px;color:#ffffff;border-bottom:1px solid rgba(255,255,255,0.06);">{{.ProductName}} <span style="color:rgba(255,255,255,0.4);">({{.ProductSKU}})</span></td>
+</tr>
+<tr>
+<td style="padding:12px 16px;font-size:13px;color:rgba(255,255,255,0.5);font-weight:600;border-bottom:1px solid rgba(255,255,255,0.06);">No. Telepon</td>
+<td style="padding:12px 16px;font-size:14px;color:#ffffff;border-bottom:1px solid rgba(255,255,255,0.06);">{{.CustomerPhone}}</td>
+</tr>
+<tr>
+<td style="padding:12px 16px;background-color:rgba(255,255,255,0.03);font-size:13px;color:rgba(255,255,255,0.5);font-weight:600;border-bottom:1px solid rgba(255,255,255,0.06);">Email</td>
+<td style="padding:12px 16px;background-color:rgba(255,255,255,0.03);font-size:14px;color:#ffffff;border-bottom:1px solid rgba(255,255,255,0.06);">{{.CustomerEmail}}</td>
+</tr>
+<tr>
+<td style="padding:12px 16px;font-size:13px;color:rgba(255,255,255,0.5);font-weight:600;border-bottom:1px solid rgba(255,255,255,0.06);">Harga Beli (Modal)</td>
+<td style="padding:12px 16px;font-size:14px;color:#ffffff;font-weight:600;border-bottom:1px solid rgba(255,255,255,0.06);">Rp {{.BuyPrice}}</td>
+</tr>
+<tr>
+<td style="padding:12px 16px;background-color:rgba(255,255,255,0.03);font-size:13px;color:rgba(255,255,255,0.5);font-weight:600;border-bottom:1px solid rgba(255,255,255,0.06);">Saldo Digiflazz</td>
+<td style="padding:12px 16px;background-color:rgba(255,255,255,0.03);font-size:14px;color:#e74c3c;font-weight:600;border-bottom:1px solid rgba(255,255,255,0.06);">Rp {{.CurrentBalance}}</td>
+</tr>
+<tr>
+<td style="padding:14px 16px;background-color:rgba(231,76,60,0.1);font-size:13px;color:#e74c3c;font-weight:700;">Kekurangan Saldo</td>
+<td style="padding:14px 16px;background-color:rgba(231,76,60,0.1);font-size:16px;color:#e74c3c;font-weight:700;">Rp {{.Deficit}}</td>
+</tr>
+</table>
+
+<!-- Urgency Note -->
+<div style="margin-top:24px;background-color:rgba(230,80,27,0.08);border:1px solid rgba(230,80,27,0.2);border-radius:10px;padding:16px;">
+<p style="margin:0;font-size:14px;color:#e6501b;font-weight:600;">&#128276; Tindakan Diperlukan</p>
+<p style="margin:8px 0 0;font-size:13px;color:#c8c8d0;line-height:1.5;">Segera top-up saldo Digiflazz agar customer bisa melakukan transaksi kembali.</p>
+</div>
+</td></tr>
+
+<!-- Footer -->
+<tr><td style="padding:20px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;">
+<p style="margin:0;font-size:11px;color:rgba(255,255,255,0.25);">Restopup — System Alert</p>
+<p style="margin:6px 0 0;font-size:11px;color:rgba(255,255,255,0.15);">Email otomatis, mohon tidak membalas.</p>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
