@@ -62,10 +62,10 @@ func (s *Service) GetCachedBalance() (float64, bool, error) {
 	// Fetch fresh balance from API
 	resp, err := s.CheckBalance()
 	if err != nil {
-		log.Printf("[DigiflazzBalance] Failed to fetch balance: %v", err)
+		log.Printf("[Digiflazz] Balance check failed: %v", err)
 		// If we have a stale cached value, return it with error flag
 		if s.hasCachedValue {
-			log.Printf("[DigiflazzBalance] Using stale cached balance: %.0f", s.cachedBalance)
+			log.Printf("[Digiflazz] Using cached balance (stale)")
 			return s.cachedBalance, true, fmt.Errorf("using stale cache: %w", err)
 		}
 		return 0, false, err
@@ -76,7 +76,7 @@ func (s *Service) GetCachedBalance() (float64, bool, error) {
 	s.cacheTime = time.Now()
 	s.hasCachedValue = true
 
-	log.Printf("[DigiflazzBalance] Fresh balance fetched: %.0f", s.cachedBalance)
+	log.Printf("[Digiflazz] Balance refreshed")
 	return s.cachedBalance, false, nil
 }
 
@@ -174,7 +174,7 @@ func (s *Service) GetPriceList(cmd string) ([]model.DigiflazzProduct, error) {
 		return products, nil
 	}
 
-	return nil, fmt.Errorf("unknown data format from Digiflazz: %s", string(trimmedData))
+	return nil, fmt.Errorf("unknown data format from Digiflazz")
 }
 
 // TopupRequest represents a topup transaction request
@@ -304,7 +304,7 @@ func (s *Service) doRequest(endpoint string, payload interface{}) ([]byte, error
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
 	return body, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -103,13 +104,7 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 		Testing:      false, // Production mode
 	})
 
-	if resp != nil {
-		respJSON, _ := json.Marshal(resp)
-		fmt.Printf("🔍 DEBUG DIGIFLAZZ RESPONSE: %s\n", string(respJSON))
-	}
-
 	if err != nil {
-		fmt.Printf("❌ DIGIFLAZZ ERROR: %v\n", err)
 		InternalError(w, fmt.Sprintf("Gagal validasi akun: %v", err))
 		return
 	}
@@ -135,10 +130,6 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 			})
 
 			if err == nil {
-				if retryResp != nil {
-					respJSON, _ := json.Marshal(retryResp)
-					fmt.Printf("🔄 RETRY %d RESPONSE: %s\n", i+1, string(respJSON))
-				}
 
 				if retryResp.Data.Status == "Sukses" {
 					isValid = true
@@ -204,7 +195,7 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 	go func() {
 		bgCtx := context.Background()
 		if err := h.orderRepo.Create(bgCtx, logOrder); err != nil {
-			fmt.Printf("❌ Failed to log validation order: %v\n", err)
+			log.Printf("[Validation] Failed to save order: %v", err)
 		} else {
 			// Auto update payment to paid because this is system transaction
 			_ = h.orderRepo.UpdateStatus(bgCtx, logOrder.ID, logOrder.Status)

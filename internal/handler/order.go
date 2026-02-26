@@ -91,8 +91,7 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		// Balance check successful - compare with buy price (modal)
 		if balance < product.BuyPrice {
 			deficit := product.BuyPrice - balance
-			log.Printf("[CreateOrder] ❌ Saldo Digiflazz kurang! Saldo: %.0f, Buy Price: %.0f, Deficit: %.0f, Product: %s",
-				balance, product.BuyPrice, deficit, product.ProductName)
+			log.Printf("[CreateOrder] Insufficient provider balance for product=%s", product.ProductName)
 
 			// Send admin email alert asynchronously
 			if h.config.AdminAlertEmail != "" {
@@ -110,9 +109,9 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 						Deficit:        deficit,
 					}
 					if err := h.emailSvc.SendAdminBalanceAlert(h.config.AdminAlertEmail, alertData); err != nil {
-						log.Printf("[CreateOrder] ❌ Failed to send admin alert email: %v", err)
+						log.Printf("[CreateOrder] Failed to send admin alert email")
 					} else {
-						log.Printf("[CreateOrder] 📧 Admin alert email sent to %s", h.config.AdminAlertEmail)
+						log.Printf("[CreateOrder] Admin balance alert sent")
 					}
 				}()
 			}
@@ -127,7 +126,7 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Balance check failed - fail-open: allow the order to proceed
-		log.Printf("[CreateOrder] ⚠️ Balance check failed (fail-open, allowing order): %v", balanceErr)
+		log.Printf("[CreateOrder] Balance check failed (fail-open, allowing order)")
 	}
 
 	// Generate unique ref_id for Digiflazz

@@ -141,7 +141,6 @@ func (h *WebhookHandler) HandleQrisPWWebhook(w http.ResponseWriter, r *http.Requ
 
 	// Always log webhook payload first
 	logID, _ := h.webhookRepo.Create(ctx, "qrispw", string(body))
-	log.Printf("[Webhook] QrisPW raw payload: %s", string(body))
 
 	// Note: Qris.pw currently does not send any signature header for validation.
 	// We rely on matching the strict parameters (TransactionID, OrderID, Amount) to authorize the webhook,
@@ -275,11 +274,7 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 		return
 	}
 
-	// Log Raw Response for debugging
-	respJSON, _ := json.Marshal(resp)
-	log.Printf("[Topup] Digiflazz Raw Response: %s", string(respJSON))
-
-	log.Printf("[Topup] Digiflazz response: status=%s, message=%s", resp.Data.Status, resp.Data.Message)
+	log.Printf("[Topup] Digiflazz response: order=%s status=%s", order.ID, resp.Data.Status)
 
 	// Map Digiflazz status to order status
 	var orderStatus model.OrderStatus

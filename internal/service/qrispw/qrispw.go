@@ -107,12 +107,7 @@ func (s *Service) CreatePayment(orderID string, amount float64, customerName str
 
 	endpoint := BaseURL + EndpointCreatePayment
 
-	// Debug logging
-	log.Printf("[QrisPW] Creating payment:")
-	log.Printf("[QrisPW] Endpoint: %s", endpoint)
-	log.Printf("[QrisPW] OrderID: %s", orderID)
-	log.Printf("[QrisPW] Amount: %d (original: %.2f)", roundedAmount, amount)
-	log.Printf("[QrisPW] CustomerName: %s", customerName)
+	log.Printf("[QrisPW] CreatePayment: order=%s amount=%d", orderID, roundedAmount)
 
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonPayload))
 	if err != nil {
@@ -126,7 +121,7 @@ func (s *Service) CreatePayment(orderID string, amount float64, customerName str
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		log.Printf("[QrisPW] HTTP Error: %v", err)
+		log.Printf("[QrisPW] Error: order=%s connection failed", orderID)
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -136,14 +131,14 @@ func (s *Service) CreatePayment(orderID string, amount float64, customerName str
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Debug logging
-	log.Printf("[QrisPW] Response Status: %d", resp.StatusCode)
-	log.Printf("[QrisPW] Response Body: %s", string(body))
+	if resp.StatusCode != 200 {
+		log.Printf("[QrisPW] Error: order=%s status=%d", orderID, resp.StatusCode)
+	}
 
 	var result CreatePaymentResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("[QrisPW] Parse Error: %v", err)
-		return nil, fmt.Errorf("failed to parse response: %w, body: %s", err, string(body))
+		log.Printf("[QrisPW] Error: order=%s failed to parse response", orderID)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if !result.Success {
@@ -151,11 +146,11 @@ func (s *Service) CreatePayment(orderID string, amount float64, customerName str
 		if errMsg == "" {
 			errMsg = "unknown error"
 		}
-		log.Printf("[QrisPW] API Error: %s", errMsg)
+		log.Printf("[QrisPW] Error: order=%s msg=%s", orderID, errMsg)
 		return nil, fmt.Errorf("qrispw error: %s", errMsg)
 	}
 
-	log.Printf("[QrisPW] Success - TransactionID: %s, QRISUrl: %s", result.TransactionID, result.QRISUrl)
+	log.Printf("[QrisPW] Success: order=%s txn=%s", orderID, result.TransactionID)
 
 	return &result, nil
 }
@@ -185,7 +180,7 @@ func (s *Service) CheckPaymentStatus(transactionID string) (*CheckPaymentRespons
 
 	var result CheckPaymentResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w, body: %s", err, string(body))
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if !result.Success {

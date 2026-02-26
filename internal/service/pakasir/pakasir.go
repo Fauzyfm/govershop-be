@@ -80,14 +80,7 @@ func (s *Service) CreateTransaction(paymentMethod, orderID string, amount float6
 
 	endpoint := fmt.Sprintf("%s%s/%s", BaseURL, EndpointTransactionCreate, paymentMethod)
 
-	// Debug logging
-	log.Printf("[Pakasir] Creating transaction:")
-	log.Printf("[Pakasir] Endpoint: %s", endpoint)
-	log.Printf("[Pakasir] Project: %s", s.config.PakasirProject)
-	log.Printf("[Pakasir] OrderID: %s", orderID)
-	log.Printf("[Pakasir] Amount: %.0f (original: %.2f)", roundedAmount, amount)
-	log.Printf("[Pakasir] PaymentMethod: %s", paymentMethod)
-	log.Printf("[Pakasir] Request Body: %s", string(jsonPayload))
+	log.Printf("[Pakasir] CreateTransaction: order=%s amount=%.0f method=%s", orderID, roundedAmount, paymentMethod)
 
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonPayload))
 	if err != nil {
@@ -98,7 +91,7 @@ func (s *Service) CreateTransaction(paymentMethod, orderID string, amount float6
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		log.Printf("[Pakasir] HTTP Error: %v", err)
+		log.Printf("[Pakasir] Error: order=%s connection failed", orderID)
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -108,22 +101,22 @@ func (s *Service) CreateTransaction(paymentMethod, orderID string, amount float6
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// Debug logging - raw response
-	log.Printf("[Pakasir] Response Status: %d", resp.StatusCode)
-	log.Printf("[Pakasir] Response Body: %s", string(body))
+	if resp.StatusCode != 200 {
+		log.Printf("[Pakasir] Error: order=%s status=%d", orderID, resp.StatusCode)
+	}
 
 	var result CreateTransactionResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("[Pakasir] Parse Error: %v", err)
-		return nil, fmt.Errorf("failed to parse response: %w, body: %s", err, string(body))
+		log.Printf("[Pakasir] Error: order=%s failed to parse response", orderID)
+		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	if result.Error != "" {
-		log.Printf("[Pakasir] API Error: %s", result.Error)
+		log.Printf("[Pakasir] Error: order=%s msg=%s", orderID, result.Error)
 		return nil, fmt.Errorf("pakasir error: %s", result.Error)
 	}
 
-	log.Printf("[Pakasir] Success - PaymentNumber: %s, TotalPayment: %.0f", result.Payment.PaymentNumber, result.Payment.TotalPayment)
+	log.Printf("[Pakasir] Success: order=%s total=%.0f", orderID, result.Payment.TotalPayment)
 
 	return &result, nil
 }
@@ -156,8 +149,8 @@ func (s *Service) CancelTransaction(orderID string, amount float64) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("cancel failed with status %d: %s", resp.StatusCode, string(body))
+		io.ReadAll(resp.Body) // drain body
+		return fmt.Errorf("cancel failed with status %d", resp.StatusCode)
 	}
 
 	return nil
@@ -241,8 +234,8 @@ func (s *Service) SimulatePayment(orderID string, amount float64) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("simulation failed with status %d: %s", resp.StatusCode, string(body))
+		io.ReadAll(resp.Body) // drain body
+		return fmt.Errorf("simulation failed with status %d", resp.StatusCode)
 	}
 
 	return nil

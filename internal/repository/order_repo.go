@@ -81,7 +81,7 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 
 // GetByID retrieves an order by ID
 func (r *OrderRepository) GetByID(ctx context.Context, id string) (*model.Order, error) {
-	fmt.Printf("[DEBUG DB] Getting Order ID: %s\n", id)
+
 	query := `
 		SELECT id, ref_id, buyer_sku_code, product_name, customer_no,
 		       buy_price, selling_price, status,

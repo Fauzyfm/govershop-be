@@ -168,12 +168,12 @@ func (h *MemberHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 
 	// Send email synchronously to support frontend loading state
 	if err := h.emailSvc.SendResetPasswordEmail(*user.Email, resetLink); err != nil {
-		log.Printf("❌ Failed to send reset email to %s: %v", *user.Email, err)
+		log.Printf("[Member] Failed to send reset email: %v", err)
 		InternalError(w, "Gagal mengirim email reset password. Silakan coba lagi.")
 		return
 	}
 
-	log.Printf("📧 Reset email sent to %s", *user.Email)
+	log.Printf("[Member] Reset email sent successfully")
 
 	Success(w, "Link reset password telah dikirim ke email Anda.", nil)
 }

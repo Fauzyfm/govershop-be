@@ -268,18 +268,7 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		log.Printf("✅ Server running on http://localhost:%s", cfg.Port)
-		log.Println("📋 API Documentation:")
-		log.Println("   GET  /health                      - Health check")
-		log.Println("   GET  /api/v1/products             - List products")
-		log.Println("   GET  /api/v1/products/categories  - List categories")
-		log.Println("   GET  /api/v1/products/brands      - List brands")
-		log.Println("   POST /api/v1/orders               - Create order")
-		log.Println("   GET  /api/v1/orders/{id}          - Get order")
-		log.Println("   POST /api/v1/orders/{id}/pay      - Initiate payment")
-		log.Println("   POST /api/v1/orders/{id}/cancel   - Cancel order")
-		log.Println("   GET  /api/v1/admin/balance        - Check Digiflazz balance")
-		log.Println("   POST /api/v1/admin/sync/products  - Sync products")
+		log.Printf("✅ Server running on port %s", cfg.Port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("❌ Server error: %v", err)
