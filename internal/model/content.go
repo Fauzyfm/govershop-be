@@ -9,6 +9,7 @@ const (
 	ContentTypeCarousel   ContentType = "carousel"
 	ContentTypeBrandImage ContentType = "brand_image"
 	ContentTypePopup      ContentType = "popup"
+	ContentTypeBrandPopup ContentType = "brand_popup"
 )
 
 // HomepageContent represents a piece of content for the homepage
@@ -51,18 +52,31 @@ type PopupResponse struct {
 	LinkURL     *string `json:"link_url,omitempty"`
 }
 
+// DisplayCategory represents a custom category for frontend display tabs
+type DisplayCategory struct {
+	ID        int64     `json:"id" db:"id"`
+	Name      string    `json:"name" db:"name"`
+	Slug      string    `json:"slug" db:"slug"`
+	SortOrder int       `json:"sort_order" db:"sort_order"`
+	IsActive  bool      `json:"is_active" db:"is_active"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+
 // BrandSetting represents settings for a specific brand
 type BrandSetting struct {
-	BrandName      string      `json:"brand_name" db:"brand_name"`
-	Slug           string      `json:"slug" db:"slug"`
-	CustomImageURL string      `json:"custom_image_url" db:"custom_image_url"`
-	IsBestSeller   bool        `json:"is_best_seller" db:"is_best_seller"`
-	IsVisible      bool        `json:"is_visible" db:"is_visible"`
-	Status         string      `json:"status" db:"status"` // 'active', 'coming_soon', 'maintenance'
-	TopupSteps     []TopupStep `json:"topup_steps" db:"topup_steps"`
-	Description    string      `json:"description" db:"description"`
-	CreatedAt      time.Time   `json:"created_at" db:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at" db:"updated_at"`
+	BrandName        string      `json:"brand_name" db:"brand_name"`
+	Slug             string      `json:"slug" db:"slug"`
+	CustomImageURL   string      `json:"custom_image_url" db:"custom_image_url"`
+	IsBestSeller     bool        `json:"is_best_seller" db:"is_best_seller"`
+	IsVisible        bool        `json:"is_visible" db:"is_visible"`
+	Status           string      `json:"status" db:"status"` // 'active', 'coming_soon', 'maintenance'
+	TopupSteps       []TopupStep `json:"topup_steps" db:"topup_steps"`
+	Description      string      `json:"description" db:"description"`
+	DisplayCategory  *string     `json:"display_category" db:"display_category"`
+	DisplaySortOrder int         `json:"display_sort_order" db:"display_sort_order"`
+	CreatedAt        time.Time   `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at" db:"updated_at"`
 }
 
 // TopupStep represents a single step in the topup guide

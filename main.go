@@ -132,6 +132,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/content/carousel", standardRL.Limit(contentHandler.GetCarousel))
 	mux.HandleFunc("GET /api/v1/content/brands", standardRL.Limit(contentHandler.GetBrandImages))
 	mux.HandleFunc("GET /api/v1/content/popup", standardRL.Limit(contentHandler.GetPopup))
+	mux.HandleFunc("GET /api/v1/content/display-categories", standardRL.Limit(contentHandler.GetPublicDisplayCategories))
 	mux.HandleFunc("GET /api/v1/brands/{brand}", standardRL.Limit(contentHandler.GetPublicBrandSetting))
 
 	// Validation endpoints (Moderate: 20 req/min)
@@ -197,6 +198,13 @@ func main() {
 	// Admin Brand Settings
 	mux.HandleFunc("GET /api/v1/admin/brands", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.GetBrandSettings)))
 	mux.HandleFunc("PUT /api/v1/admin/brands/{brand}", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.UpdateBrandSetting)))
+
+	// Admin Display Categories
+	mux.HandleFunc("GET /api/v1/admin/display-categories", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.GetDisplayCategories)))
+	mux.HandleFunc("POST /api/v1/admin/display-categories", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.CreateDisplayCategory)))
+	mux.HandleFunc("PUT /api/v1/admin/display-categories/sort", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.SortDisplayCategories)))
+	mux.HandleFunc("PUT /api/v1/admin/display-categories/{id}", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.UpdateDisplayCategory)))
+	mux.HandleFunc("DELETE /api/v1/admin/display-categories/{id}", standardRL.Limit(authMiddleware.AdminAuth(contentHandler.DeleteDisplayCategory)))
 
 	// Admin TOTP / 2FA Security
 	mux.HandleFunc("GET /api/v1/admin/totp/status", standardRL.Limit(authMiddleware.AdminAuth(totpHandler.GetTOTPStatus)))
