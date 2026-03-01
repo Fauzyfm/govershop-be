@@ -339,21 +339,20 @@ func (r *ProductRepository) UpsertProduct(ctx context.Context, dfProduct model.D
 	return nil
 }
 
-// MarkUnavailable marks products not in the sync as unavailable
-func (r *ProductRepository) MarkUnavailable(ctx context.Context, skuCodes []string) error {
+// DeleteUnavailable completely removes products not in the sync from the DB
+func (r *ProductRepository) DeleteUnavailable(ctx context.Context, skuCodes []string) error {
 	if len(skuCodes) == 0 {
 		return nil
 	}
 
 	query := `
-		UPDATE products 
-		SET is_available = false, updated_at = NOW()
+		DELETE FROM products 
 		WHERE buyer_sku_code NOT IN (SELECT UNNEST($1::text[]))
 	`
 
 	_, err := r.db.Exec(ctx, query, skuCodes)
 	if err != nil {
-		return fmt.Errorf("failed to mark unavailable: %w", err)
+		return fmt.Errorf("failed to delete unavailable products: %w", err)
 	}
 
 	return nil
