@@ -175,9 +175,9 @@ func (h *AdminHandler) PerformProductSync(ctx context.Context) (int, int, int, e
 		}
 	}
 
-	// Delete products not in sync
-	if err := h.productRepo.DeleteUnavailable(ctx, skuCodes); err != nil {
-		log.Printf("[Sync] Failed to delete unavailable products: %v", err)
+	// Mark products not in sync as unavailable
+	if err := h.productRepo.MarkUnavailable(ctx, skuCodes); err != nil {
+		log.Printf("[Sync] Failed to mark unavailable products: %v", err)
 	}
 
 	// Complete sync log

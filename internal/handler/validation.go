@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -190,20 +189,11 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 		SerialNumber:    resp.Data.SN,
 	}
 
-	// Fire and forget logging (in goroutine is safer for latency, but here we want data integrity so standard call)
-	// Use background context for DB insert to prevent cancellation if HTTP request finishes early
-	go func() {
-		bgCtx := context.Background()
-		if err := h.orderRepo.Create(bgCtx, logOrder); err != nil {
-			log.Printf("[Validation] Failed to save order: %v", err)
-		} else {
-			// Auto update payment to paid because this is system transaction
-			_ = h.orderRepo.UpdateStatus(bgCtx, logOrder.ID, logOrder.Status)
-			// Wait, Create already sets status. But maybe payment status?
-			// The Order model might imply payment flow.
-			// Let's assume Create sets initial status correctly.
-		}
-	}()
+	// Synchronous DB insert — must complete before sending response.
+	// This ensures the order exists in DB when Digiflazz sends its webhook callback.
+	if err := h.orderRepo.Create(ctx, logOrder); err != nil {
+		log.Printf("[Validation] Failed to save validation order: %v", err)
+	}
 	// ------------------------------------------
 
 	Success(w, "Validasi berhasil", ValidateAccountResponse{
