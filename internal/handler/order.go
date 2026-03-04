@@ -297,9 +297,9 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 
 	payment := &model.Payment{
 		OrderID:             orderID,
-		Amount:              sellingPrice,                   // Pure product price (e.g., 1466)
-		Fee:                 float64(ipaymuResp.Data.Fee),   // iPaymu's transaction fee
-		TotalPayment:        float64(ipaymuResp.Data.Total), // Final amount customer pays
+		Amount:              sellingPrice,                                           // Pure product price (e.g., 1466)
+		Fee:                 float64(ipaymuResp.Data.Fee),                           // iPaymu's transaction fee
+		TotalPayment:        sellingPrice + adminFee + float64(ipaymuResp.Data.Fee), // Actual total customer pays
 		PaymentMethod:       model.PaymentMethod(strings.ToLower(paymentChannelValue)),
 		PaymentNumber:       paymentNumber,
 		QRImageURL:          qrImageURL,
