@@ -136,7 +136,6 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 	if product.DiscountPrice != nil && *product.DiscountPrice > 0 {
 		sellingPrice = *product.DiscountPrice
 	}
-	sellingPrice += 10 // Flat admin fee
 
 	// Create order
 	order := &model.Order{
