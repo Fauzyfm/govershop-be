@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,6 +24,7 @@ type OrderHandler struct {
 	orderRepo    *repository.OrderRepository
 	paymentRepo  *repository.PaymentRepository
 	productRepo  *repository.ProductRepository
+	userRepo     *repository.UserRepository
 	digiflazzSvc *digiflazz.Service
 	ipaymuSvc    *ipaymu.Service
 	emailSvc     *email.Service
@@ -34,6 +36,7 @@ func NewOrderHandler(
 	orderRepo *repository.OrderRepository,
 	paymentRepo *repository.PaymentRepository,
 	productRepo *repository.ProductRepository,
+	userRepo *repository.UserRepository,
 	digiflazzSvc *digiflazz.Service,
 	ipaymuSvc *ipaymu.Service,
 	emailSvc *email.Service,
@@ -43,6 +46,7 @@ func NewOrderHandler(
 		orderRepo:    orderRepo,
 		paymentRepo:  paymentRepo,
 		productRepo:  productRepo,
+		userRepo:     userRepo,
 		digiflazzSvc: digiflazzSvc,
 		ipaymuSvc:    ipaymuSvc,
 		emailSvc:     emailSvc,
@@ -408,6 +412,9 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 				_ = h.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusPaid)
 				payment.Status = model.PaymentStatusCompleted
 				order.Status = model.OrderStatusPaid
+
+				// Process topup to Digiflazz manually!
+				go h.processTopup(order)
 			} else if ipaymuStatus.Data.Status == -1 { // -1 = failed/expired
 				_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusExpired)
 				payment.Status = model.PaymentStatusExpired
@@ -602,4 +609,82 @@ func (h *OrderHandler) TrackOrders(w http.ResponseWriter, r *http.Request) {
 		"orders": responses,
 		"total":  len(responses),
 	})
+}
+
+// processTopup processes the topup transaction with Digiflazz
+func (h *OrderHandler) processTopup(order *model.Order) {
+	// Use background context for goroutine operations
+	ctx := context.Background()
+
+	log.Printf("[Topup-Manual] Processing topup for order %s", order.ID)
+
+	// Update status to processing
+	_ = h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusProcessing)
+
+	// Create transaction with Digiflazz
+	// Force Testing: false because user wants real transactions even if ENV is not explicitly set to production
+	req := digiflazz.TopupRequest{
+		BuyerSKUCode: order.BuyerSKUCode,
+		CustomerNo:   order.CustomerNo,
+		RefID:        order.RefID,
+		Testing:      false,
+	}
+
+	resp, err := h.digiflazzSvc.CreateTransaction(req)
+
+	if err != nil {
+		log.Printf("[Topup-Manual] Failed to create transaction: %v", err)
+		// Check if it's a "Signature Anda salah" error or IP error
+		_ = h.orderRepo.UpdateDigiflazzResponse(ctx, order.ID, model.OrderStatusFailed, "", "", "", err.Error())
+
+		// REFUND IF MEMBER
+		if order.MemberID != nil {
+			amount := order.MemberPrice
+			if amount == nil {
+				amount = &order.SellingPrice
+			}
+			desc := fmt.Sprintf("Refund Gagal Transaksi (Initial) %s", order.RefID)
+			if err := h.userRepo.TopupBalance(ctx, *order.MemberID, *amount, desc, "SYSTEM"); err != nil {
+				log.Printf("CRITICAL: Failed to refund member balance for order %s: %v", order.ID, err)
+			}
+		}
+
+		return
+	}
+
+	log.Printf("[Topup-Manual] Digiflazz response: order=%s status=%s", order.ID, resp.Data.Status)
+
+	// Map Digiflazz status to order status
+	var orderStatus model.OrderStatus
+	switch resp.Data.Status {
+	case "Sukses":
+		orderStatus = model.OrderStatusSuccess
+	case "Gagal":
+		orderStatus = model.OrderStatusFailed
+	default:
+		orderStatus = model.OrderStatusProcessing
+	}
+
+	// Update order with Digiflazz response
+	_ = h.orderRepo.UpdateDigiflazzResponse(
+		ctx,
+		order.ID,
+		orderStatus,
+		resp.Data.Status,
+		resp.Data.RC,
+		resp.Data.SN,
+		resp.Data.Message,
+	)
+
+	// REFUND IF MEMBER AND FAILED
+	if orderStatus == model.OrderStatusFailed && order.MemberID != nil {
+		amount := order.MemberPrice
+		if amount == nil {
+			amount = &order.SellingPrice
+		}
+		desc := fmt.Sprintf("Refund Gagal Transaksi %s", order.RefID)
+		if err := h.userRepo.TopupBalance(ctx, *order.MemberID, *amount, desc, "SYSTEM"); err != nil {
+			log.Printf("CRITICAL: Failed to refund member balance for order %s: %v", order.ID, err)
+		}
+	}
 }

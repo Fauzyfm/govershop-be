@@ -70,7 +70,7 @@ func main() {
 
 	// Initialize handlers
 	productHandler := handler.NewProductHandler(productRepo)
-	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, digiflazzSvc, ipaymuSvc, emailSvc)
+	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, userRepo, digiflazzSvc, ipaymuSvc, emailSvc)
 	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, digiflazzSvc, ipaymuSvc)
 	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc, webhookRepo, userRepo)
 
