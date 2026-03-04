@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"govershop-api/internal/config"
@@ -50,11 +51,26 @@ func NewWebhookHandler(
 	}
 }
 
+// parseFormBody parses a URL-encoded form body string into a map
+func parseFormBody(body string) (map[string]string, error) {
+	values, err := url.ParseQuery(body)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]string)
+	for k, v := range values {
+		if len(v) > 0 {
+			result[k] = v[0]
+		}
+	}
+	return result, nil
+}
+
 // HandleIpaymuWebhook handles POST /api/v1/webhook/ipaymu
 func (h *WebhookHandler) HandleIpaymuWebhook(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Read body
+	// Read raw body (needed for signature verification)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("[Webhook] Failed to read iPaymu webhook body: %v", err)
@@ -65,31 +81,84 @@ func (h *WebhookHandler) HandleIpaymuWebhook(w http.ResponseWriter, r *http.Requ
 	// Log webhook
 	logID, _ := h.webhookRepo.Create(ctx, "ipaymu", string(body))
 
-	// Parse payload
-	var payload ipaymu.WebhookPayload
-	if err := json.Unmarshal(body, &payload); err != nil {
-		log.Printf("[Webhook] Failed to parse iPaymu webhook: %v", err)
-		h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
+	// Get signature from header
+	signature := r.Header.Get("X-Signature")
+
+	// Verify signature (skip in sandbox/dev if signature is empty)
+	if signature != "" {
+		if !h.ipaymuSvc.VerifyWebhookSignature(body, signature) {
+			log.Printf("[Webhook] iPaymu signature verification failed")
+			h.webhookRepo.MarkProcessed(ctx, logID, "signature verification failed")
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("[Webhook] iPaymu signature verified ✅")
+	} else {
+		log.Printf("[Webhook] iPaymu webhook received without signature (sandbox mode)")
 	}
 
-	log.Printf("[Webhook] iPaymu webhook received: trx_id=%d, reference_id=%s, status=%s, status_code=%d",
-		payload.TrxID, payload.ReferenceID, payload.Status, payload.StatusCode)
+	// Parse payload — try JSON first, then form-encoded
+	var payload ipaymu.WebhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		// Try form-encoded parsing
+		if parseErr := r.ParseForm(); parseErr != nil {
+			log.Printf("[Webhook] Failed to parse iPaymu webhook (neither JSON nor form): %v", parseErr)
+			h.webhookRepo.MarkProcessed(ctx, logID, "parse error")
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		// Manually rebuild body from form values for iPaymu form-urlencoded
+		// Re-read from the raw body using net/url
+		formValues, parseErr := parseFormBody(string(body))
+		if parseErr != nil {
+			log.Printf("[Webhook] Failed to parse form body: %v", parseErr)
+			h.webhookRepo.MarkProcessed(ctx, logID, "form parse error")
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		payload.ReferenceID = formValues["reference_id"]
+		payload.SID = formValues["sid"]
+		payload.Status = formValues["status"]
+		payload.Channel = formValues["channel"]
+		payload.Via = formValues["via"]
+		payload.Amount = formValues["amount"]
+		payload.Fee = formValues["fee"]
+		payload.BuyerName = formValues["buyer_name"]
+		payload.BuyerEmail = formValues["buyer_email"]
+		payload.BuyerPhone = formValues["buyer_phone"]
+		payload.PaymentNo = formValues["payment_no"]
+
+		// Parse numeric fields
+		if v := formValues["trx_id"]; v != "" {
+			fmt.Sscanf(v, "%d", &payload.TrxID)
+		}
+		if v := formValues["status_code"]; v != "" {
+			fmt.Sscanf(v, "%d", &payload.StatusCode)
+		}
+	}
+
+	log.Printf("[Webhook] iPaymu webhook received: trx_id=%d, reference_id=%s, sid=%s, status=%s, status_code=%d",
+		payload.TrxID, payload.ReferenceID, payload.SID, payload.Status, payload.StatusCode)
 
 	// Only process successful payments (status_code == 1)
 	if payload.StatusCode != 1 {
 		log.Printf("[Webhook] Ignoring non-success iPaymu status: %s (code=%d)", payload.Status, payload.StatusCode)
 		h.webhookRepo.MarkProcessed(ctx, logID, "")
 		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
 		return
 	}
 
-	// Find order by RefID (used as reference_id in iPaymu)
-	order, err := h.orderRepo.GetByRefID(ctx, payload.ReferenceID)
+	// Find order by RefID — try reference_id first, then sid
+	refID := payload.ReferenceID
+	if refID == "" {
+		refID = payload.SID
+	}
+
+	order, err := h.orderRepo.GetByRefID(ctx, refID)
 	if err != nil {
-		log.Printf("[Webhook] iPaymu order not found: %s", payload.ReferenceID)
-		h.webhookRepo.MarkProcessed(ctx, logID, "order not found")
+		log.Printf("[Webhook] iPaymu order not found for ref: %s", refID)
+		h.webhookRepo.MarkProcessed(ctx, logID, "order not found: "+refID)
 		http.Error(w, "Order not found", http.StatusNotFound)
 		return
 	}

@@ -315,34 +315,34 @@ func (s *Service) CheckTransaction(transactionID int) (*CheckTransactionResponse
 // ============================================================
 
 // WebhookPayload represents the webhook payload from iPaymu
+// iPaymu sends webhooks as application/x-www-form-urlencoded
 type WebhookPayload struct {
-	TrxID       int     `json:"trx_id"`
-	Status      string  `json:"status"`      // "berhasil", "pending", "expired", "gagal"
-	StatusCode  int     `json:"status_code"` // 1=success, 0=pending, -1=failed
-	ReferenceID string  `json:"reference_id"`
-	Amount      float64 `json:"amount"`
-	Fee         float64 `json:"fee"`
-	Channel     string  `json:"channel"`
-	Via         string  `json:"via"`
-	Signature   string  `json:"signature"`
+	TrxID       int    `json:"trx_id"`
+	SID         string `json:"sid"`
+	Status      string `json:"status"`      // "berhasil", "pending", "expired", "gagal"
+	StatusCode  int    `json:"status_code"` // 1=success, 0=pending, -1=failed
+	ReferenceID string `json:"reference_id"`
+	Amount      string `json:"amount"`
+	Fee         string `json:"fee"`
+	Channel     string `json:"channel"`
+	Via         string `json:"via"`
+	PaymentNo   string `json:"payment_no"`
+	BuyerName   string `json:"buyer_name"`
+	BuyerEmail  string `json:"buyer_email"`
+	BuyerPhone  string `json:"buyer_phone"`
 }
 
-// VerifyWebhookSignature verifies the signature from iPaymu webhook
-func (s *Service) VerifyWebhookSignature(payload WebhookPayload) bool {
-	// Remove signature from payload for verification
-	receivedSignature := payload.Signature
-	payload.Signature = ""
-
-	// Marshal payload without signature
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		log.Printf("[iPaymu] Error marshaling webhook payload for verification")
+// VerifyWebhookSignature verifies the X-Signature header from iPaymu webhook
+// iPaymu signs the raw body with HMAC-SHA256 using the API key
+func (s *Service) VerifyWebhookSignature(rawBody []byte, receivedSignature string) bool {
+	if receivedSignature == "" {
+		log.Printf("[iPaymu] No signature provided in webhook")
 		return false
 	}
 
-	// HMAC-SHA256 with VA as key
-	h := hmac.New(sha256.New, []byte(s.config.IpaymuVA))
-	h.Write(jsonData)
+	// HMAC-SHA256 with API key
+	h := hmac.New(sha256.New, []byte(s.config.IpaymuKey))
+	h.Write(rawBody)
 	expectedSignature := hex.EncodeToString(h.Sum(nil))
 
 	return hmac.Equal([]byte(expectedSignature), []byte(receivedSignature))
