@@ -242,8 +242,8 @@ func (s *Service) CreateDirectPayment(req DirectPaymentRequest) (*DirectPaymentR
 		return nil, fmt.Errorf("ipaymu error: %s", result.Message)
 	}
 
-	log.Printf("[iPaymu] Success: ref=%s txn=%d paymentNo=%s",
-		req.ReferenceID, result.Data.TransactionID, result.Data.PaymentNo)
+	log.Printf("[iPaymu] Success: ref=%s txn=%d total=%d",
+		req.ReferenceID, result.Data.TransactionID, result.Data.Total)
 
 	return &result, nil
 }
