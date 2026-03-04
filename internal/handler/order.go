@@ -417,7 +417,9 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 				go h.processTopup(order)
 			} else if ipaymuStatus.Data.Status == -1 { // -1 = failed/expired
 				_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusExpired)
+				_ = h.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusExpired)
 				payment.Status = model.PaymentStatusExpired
+				order.Status = model.OrderStatusExpired
 			}
 		}
 	}

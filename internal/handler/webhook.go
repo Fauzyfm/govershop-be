@@ -172,9 +172,9 @@ func (h *WebhookHandler) HandleIpaymuWebhook(w http.ResponseWriter, r *http.Requ
 		if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusExpired); err != nil {
 			log.Printf("[Webhook] Failed to update payment to expired: %v", err)
 		}
-		// Optional: you can update order status to cancelled/expired if needed.
-		// For now we just update payment so the customer can try again or the UI shows expired.
-		// _ = h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusCancelled)
+		if err := h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusExpired); err != nil {
+			log.Printf("[Webhook] Failed to update order status to expired: %v", err)
+		}
 	} else {
 		// Pending or other unknown codes
 		log.Printf("[Webhook] Ignoring non-success iPaymu status: %s (code=%d)", payload.Status, payload.StatusCode)
