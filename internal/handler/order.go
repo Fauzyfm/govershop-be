@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -247,10 +248,30 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 	// Flat admin fee
 	var adminFee float64 = 10
 
-	// Amount to send to iPaymu = selling price + admin fee
-	// NOTE: Do NOT add paymentFee here — iPaymu adds its own transaction fee automatically
-	// If we add it, the customer gets charged double fee
-	ipaymuAmount := int(sellingPrice + adminFee)
+	// Calculate payment fee from iPaymu channels data
+	var paymentFee float64 = 0
+	if channels, err := h.ipaymuSvc.GetPaymentChannels(); err == nil {
+		for _, category := range channels.Data {
+			for _, ch := range category.Channels {
+				if strings.EqualFold(ch.Code, req.PaymentMethod) || strings.EqualFold(ch.Code, req.PaymentChannel) {
+					if ch.TransactionFee.ActualFeeType == "PERCENT" {
+						paymentFee = math.Ceil((ch.TransactionFee.ActualFee / 100) * sellingPrice)
+					} else {
+						paymentFee = ch.TransactionFee.ActualFee
+					}
+					paymentFee += ch.TransactionFee.AdditionalFee
+					break
+				}
+			}
+		}
+	}
+
+	// Total = product + admin + transaction fee (this is what customer pays)
+	totalFee := adminFee + paymentFee
+	totalPrice := sellingPrice + totalFee
+
+	// Send full total to iPaymu — iPaymu deducts its fee from merchant, NOT from customer
+	ipaymuAmount := int(totalPrice)
 
 	// Create payment via iPaymu Direct Payment
 	ipaymuReq := ipaymu.DirectPaymentRequest{
@@ -297,9 +318,9 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 
 	payment := &model.Payment{
 		OrderID:             orderID,
-		Amount:              sellingPrice,                                           // Pure product price (e.g., 1466)
-		Fee:                 float64(ipaymuResp.Data.Fee),                           // iPaymu's transaction fee
-		TotalPayment:        sellingPrice + adminFee + float64(ipaymuResp.Data.Fee), // Actual total customer pays
+		Amount:              sellingPrice, // Pure product price (e.g., 1466)
+		Fee:                 totalFee,     // Admin (10) + transaction fee (e.g., 11) = 21
+		TotalPayment:        totalPrice,   // amount + fee = 1487 (what customer pays)
 		PaymentMethod:       model.PaymentMethod(strings.ToLower(paymentChannelValue)),
 		PaymentNumber:       paymentNumber,
 		QRImageURL:          qrImageURL,
