@@ -26,9 +26,10 @@ func (r *PaymentRepository) Create(ctx context.Context, payment *model.Payment) 
 		INSERT INTO payments (
 			order_id, amount, fee, total_payment,
 			payment_method, payment_number, qr_image_url, qrispw_transaction_id,
+			ipaymu_transaction_id, payment_gateway,
 			status, expired_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 		)
 		RETURNING id, created_at
 	`
@@ -36,6 +37,7 @@ func (r *PaymentRepository) Create(ctx context.Context, payment *model.Payment) 
 	err := r.db.QueryRow(ctx, query,
 		payment.OrderID, payment.Amount, payment.Fee, payment.TotalPayment,
 		payment.PaymentMethod, payment.PaymentNumber, payment.QRImageURL, payment.QrisPWTransactionID,
+		payment.IpaymuTransactionID, payment.PaymentGateway,
 		payment.Status, payment.ExpiredAt,
 	).Scan(&payment.ID, &payment.CreatedAt)
 
@@ -53,6 +55,8 @@ func (r *PaymentRepository) GetByOrderID(ctx context.Context, orderID string) (*
 		       payment_method, payment_number,
 		       COALESCE(qr_image_url, '') as qr_image_url,
 		       COALESCE(qrispw_transaction_id, '') as qrispw_transaction_id,
+		       COALESCE(ipaymu_transaction_id, 0) as ipaymu_transaction_id,
+		       COALESCE(payment_gateway, '') as payment_gateway,
 		       status,
 		       expired_at, completed_at, created_at
 		FROM payments
@@ -66,6 +70,7 @@ func (r *PaymentRepository) GetByOrderID(ctx context.Context, orderID string) (*
 		&p.ID, &p.OrderID, &p.Amount, &p.Fee, &p.TotalPayment,
 		&p.PaymentMethod, &p.PaymentNumber,
 		&p.QRImageURL, &p.QrisPWTransactionID,
+		&p.IpaymuTransactionID, &p.PaymentGateway,
 		&p.Status,
 		&p.ExpiredAt, &p.CompletedAt, &p.CreatedAt,
 	)
@@ -83,6 +88,8 @@ func (r *PaymentRepository) GetByID(ctx context.Context, id string) (*model.Paym
 		       payment_method, payment_number,
 		       COALESCE(qr_image_url, '') as qr_image_url,
 		       COALESCE(qrispw_transaction_id, '') as qrispw_transaction_id,
+		       COALESCE(ipaymu_transaction_id, 0) as ipaymu_transaction_id,
+		       COALESCE(payment_gateway, '') as payment_gateway,
 		       status,
 		       expired_at, completed_at, created_at
 		FROM payments
@@ -94,6 +101,7 @@ func (r *PaymentRepository) GetByID(ctx context.Context, id string) (*model.Paym
 		&p.ID, &p.OrderID, &p.Amount, &p.Fee, &p.TotalPayment,
 		&p.PaymentMethod, &p.PaymentNumber,
 		&p.QRImageURL, &p.QrisPWTransactionID,
+		&p.IpaymuTransactionID, &p.PaymentGateway,
 		&p.Status,
 		&p.ExpiredAt, &p.CompletedAt, &p.CreatedAt,
 	)
@@ -168,6 +176,8 @@ func (r *PaymentRepository) GetPendingPayments(ctx context.Context) ([]model.Pay
 		       payment_method, payment_number,
 		       COALESCE(qr_image_url, '') as qr_image_url,
 		       COALESCE(qrispw_transaction_id, '') as qrispw_transaction_id,
+		       COALESCE(ipaymu_transaction_id, 0) as ipaymu_transaction_id,
+		       COALESCE(payment_gateway, '') as payment_gateway,
 		       status,
 		       expired_at, completed_at, created_at
 		FROM payments
@@ -187,6 +197,7 @@ func (r *PaymentRepository) GetPendingPayments(ctx context.Context) ([]model.Pay
 			&p.ID, &p.OrderID, &p.Amount, &p.Fee, &p.TotalPayment,
 			&p.PaymentMethod, &p.PaymentNumber,
 			&p.QRImageURL, &p.QrisPWTransactionID,
+			&p.IpaymuTransactionID, &p.PaymentGateway,
 			&p.Status,
 			&p.ExpiredAt, &p.CompletedAt, &p.CreatedAt,
 		)

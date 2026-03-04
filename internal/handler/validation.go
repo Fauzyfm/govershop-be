@@ -12,6 +12,7 @@ import (
 	"govershop-api/internal/model"
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
+	"govershop-api/internal/service/ipaymu"
 )
 
 // ValidationHandler handles account validation requests
@@ -20,6 +21,7 @@ type ValidationHandler struct {
 	productRepo  *repository.ProductRepository
 	orderRepo    *repository.OrderRepository
 	digiflazzSvc *digiflazz.Service
+	ipaymuSvc    *ipaymu.Service
 }
 
 // NewValidationHandler creates a new ValidationHandler
@@ -28,12 +30,14 @@ func NewValidationHandler(
 	productRepo *repository.ProductRepository,
 	orderRepo *repository.OrderRepository,
 	digiflazzSvc *digiflazz.Service,
+	ipaymuSvc *ipaymu.Service,
 ) *ValidationHandler {
 	return &ValidationHandler{
 		config:       cfg,
 		productRepo:  productRepo,
 		orderRepo:    orderRepo,
 		digiflazzSvc: digiflazzSvc,
+		ipaymuSvc:    ipaymuSvc,
 	}
 }
 

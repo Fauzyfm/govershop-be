@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"time"
 )
 
@@ -40,8 +41,10 @@ type Payment struct {
 	TotalPayment        float64       `json:"total_payment" db:"total_payment"`
 	PaymentMethod       PaymentMethod `json:"payment_method" db:"payment_method"`
 	PaymentNumber       string        `json:"payment_number" db:"payment_number"`                         // QR string or VA number
-	QRImageURL          string        `json:"qr_image_url,omitempty" db:"qr_image_url"`                   // QRIS image URL from qris.pw
-	QrisPWTransactionID string        `json:"qrispw_transaction_id,omitempty" db:"qrispw_transaction_id"` // Transaction ID from qris.pw
+	QRImageURL          string        `json:"qr_image_url,omitempty" db:"qr_image_url"`                   // QRIS image URL
+	QrisPWTransactionID string        `json:"qrispw_transaction_id,omitempty" db:"qrispw_transaction_id"` // Transaction ID from qris.pw (legacy)
+	IpaymuTransactionID int           `json:"ipaymu_transaction_id,omitempty" db:"ipaymu_transaction_id"` // Transaction ID from iPaymu
+	PaymentGateway      string        `json:"payment_gateway,omitempty" db:"payment_gateway"`             // "ipaymu", "qrispw", "pakasir"
 	Status              PaymentStatus `json:"status" db:"status"`
 	ExpiredAt           time.Time     `json:"expired_at" db:"expired_at"`
 	CompletedAt         *time.Time    `json:"completed_at,omitempty" db:"completed_at"`
@@ -50,7 +53,8 @@ type Payment struct {
 
 // InitiatePaymentRequest is the request body for initiating payment
 type InitiatePaymentRequest struct {
-	PaymentMethod PaymentMethod `json:"payment_method" validate:"required"`
+	PaymentMethod  string `json:"payment_method" validate:"required"`
+	PaymentChannel string `json:"payment_channel" validate:"required"`
 }
 
 // PaymentResponse is the response format for FE
@@ -63,7 +67,7 @@ type PaymentResponse struct {
 	PaymentMethod PaymentMethod `json:"payment_method"`
 	PaymentNumber string        `json:"payment_number"`
 	QRString      string        `json:"qr_string,omitempty"`    // Derived from PaymentNumber for QRIS
-	QRImageURL    string        `json:"qr_image_url,omitempty"` // QRIS image URL from qris.pw
+	QRImageURL    string        `json:"qr_image_url,omitempty"` // QRIS image URL
 	VANumber      string        `json:"va_number,omitempty"`    // Derived from PaymentNumber for VA
 	Status        PaymentStatus `json:"status"`
 	ExpiredAt     time.Time     `json:"expired_at"`
@@ -91,7 +95,10 @@ func (p *Payment) ToResponse() PaymentResponse {
 	}
 
 	// Map PaymentNumber to specific fields for frontend convenience
-	if p.PaymentMethod == PaymentMethodQRIS {
+	// QRIS detection: "qris" in method name, or "mpm" (iPaymu's QRIS channel code), or QR image URL is set
+	methodLower := strings.ToLower(string(p.PaymentMethod))
+	isQRIS := methodLower == "qris" || methodLower == "mpm" || strings.Contains(methodLower, "qris") || p.QRImageURL != ""
+	if isQRIS {
 		resp.QRString = p.PaymentNumber
 		resp.QRImageURL = p.QRImageURL
 	} else {

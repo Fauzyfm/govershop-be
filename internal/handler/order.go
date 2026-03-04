@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"govershop-api/internal/config"
@@ -12,8 +14,7 @@ import (
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
 	"govershop-api/internal/service/email"
-	"govershop-api/internal/service/pakasir"
-	"govershop-api/internal/service/qrispw"
+	"govershop-api/internal/service/ipaymu"
 )
 
 // OrderHandler handles order-related HTTP requests
@@ -23,8 +24,7 @@ type OrderHandler struct {
 	paymentRepo  *repository.PaymentRepository
 	productRepo  *repository.ProductRepository
 	digiflazzSvc *digiflazz.Service
-	pakasirSvc   *pakasir.Service
-	qrispwSvc    *qrispw.Service
+	ipaymuSvc    *ipaymu.Service
 	emailSvc     *email.Service
 }
 
@@ -35,8 +35,7 @@ func NewOrderHandler(
 	paymentRepo *repository.PaymentRepository,
 	productRepo *repository.ProductRepository,
 	digiflazzSvc *digiflazz.Service,
-	pakasirSvc *pakasir.Service,
-	qrispwSvc *qrispw.Service,
+	ipaymuSvc *ipaymu.Service,
 	emailSvc *email.Service,
 ) *OrderHandler {
 	return &OrderHandler{
@@ -45,8 +44,7 @@ func NewOrderHandler(
 		paymentRepo:  paymentRepo,
 		productRepo:  productRepo,
 		digiflazzSvc: digiflazzSvc,
-		pakasirSvc:   pakasirSvc,
-		qrispwSvc:    qrispwSvc,
+		ipaymuSvc:    ipaymuSvc,
 		emailSvc:     emailSvc,
 	}
 }
@@ -204,6 +202,10 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 		BadRequest(w, "payment_method wajib diisi")
 		return
 	}
+	if req.PaymentChannel == "" {
+		BadRequest(w, "payment_channel wajib diisi")
+		return
+	}
 
 	// Get order
 	log.Printf("[InitiatePayment] Looking for order ID: %s", orderID)
@@ -220,83 +222,111 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Route payment based on method
-	var payment *model.Payment
+	// Build notify URL (webhook callback for iPaymu)
+	scheme := "https"
+	if r.TLS == nil && r.Host == "localhost:8080" {
+		scheme = "http"
+	}
+	notifyURL := fmt.Sprintf("%s://%s/api/v1/webhook/ipaymu", scheme, r.Host)
 
-	if req.PaymentMethod == model.PaymentMethodQRIS {
-		// ===== QRIS via qris.pw (no fee) =====
-		// ===== QRIS via qris.pw (no fee) =====
-		// Use request Host for callback URL (backend URL), NOT frontend URL
-		scheme := "https"
-		if r.TLS == nil && r.Host == "localhost:8080" {
-			scheme = "http"
-		}
-		callbackURL := fmt.Sprintf("%s://%s/api/v1/webhook/qrispw", scheme, r.Host)
+	customerName := "Customer"
+	if order.CustomerName != "" {
+		customerName = order.CustomerName
+	}
+	customerEmail := order.CustomerEmail
+	if customerEmail == "" {
+		customerEmail = "customer@restopup.com"
+	}
+	customerPhone := order.CustomerPhone
+	if customerPhone == "" {
+		customerPhone = "08123456789"
+	}
 
-		customerName := "Customer"
-		if order.CustomerName != "" {
-			customerName = order.CustomerName
-		}
+	// Determine base price
+	sellingPrice := order.SellingPrice
 
-		qrispwResp, err := h.qrispwSvc.CreatePayment(
-			order.RefID,
-			order.SellingPrice,
-			customerName,
-			callbackURL,
-		)
-		if err != nil {
-			InternalError(w, fmt.Sprintf("Gagal membuat pembayaran QRIS: %v", err))
-			return
-		}
+	// Flat admin fee
+	var adminFee float64 = 10
 
-		// Parse expiry time from qris.pw (format: "2025-10-30 15:00:00")
-		var expiredAt time.Time
-		t, err := time.Parse("2006-01-02 15:04:05", qrispwResp.ExpiresAt)
-		if err == nil && !t.IsZero() {
-			expiredAt = t.Add(-7 * time.Hour)
-		} else {
-			// Fallback: 10 minutes from now if parsing fails
-			// Ensure fallback uses WIB logic implicitly via time.Now() configuration but adding 10m is safe
-			expiredAt = time.Now().Add(10 * time.Minute)
-		}
+	// Calculate Payment Fee from iPaymu channels data
+	var paymentFee float64 = 0
 
-		payment = &model.Payment{
-			OrderID:             orderID,
-			Amount:              order.SellingPrice,
-			Fee:                 0, // No fee with qris.pw
-			TotalPayment:        order.SellingPrice,
-			PaymentMethod:       model.PaymentMethodQRIS,
-			PaymentNumber:       qrispwResp.QRISString,
-			QRImageURL:          qrispwResp.QRISUrl,
-			QrisPWTransactionID: qrispwResp.TransactionID,
-			Status:              model.PaymentStatusPending,
-			ExpiredAt:           expiredAt,
+	if channels, err := h.ipaymuSvc.GetPaymentChannels(); err == nil {
+		for _, category := range channels.Data {
+			for _, ch := range category.Channels {
+				if strings.EqualFold(ch.Code, req.PaymentMethod) || strings.EqualFold(ch.Code, req.PaymentChannel) {
+					if ch.TransactionFee.ActualFeeType == "PERCENT" {
+						paymentFee = (ch.TransactionFee.ActualFee / 100) * sellingPrice
+					} else {
+						paymentFee = ch.TransactionFee.ActualFee
+					}
+					paymentFee += ch.TransactionFee.AdditionalFee
+					break
+				}
+			}
 		}
+	}
+
+	// Round up payment fee
+	paymentFee = math.Ceil(paymentFee)
+
+	totalPrice := sellingPrice + adminFee + paymentFee
+
+	// Create payment via iPaymu Direct Payment
+	ipaymuReq := ipaymu.DirectPaymentRequest{
+		Name:           customerName,
+		Phone:          customerPhone,
+		Email:          customerEmail,
+		Amount:         int(totalPrice),
+		NotifyURL:      notifyURL,
+		PaymentMethod:  req.PaymentMethod,
+		PaymentChannel: req.PaymentChannel,
+		ReferenceID:    order.RefID,
+		BuyerName:      customerName,
+		BuyerEmail:     customerEmail,
+		BuyerPhone:     customerPhone,
+	}
+
+	ipaymuResp, err := h.ipaymuSvc.CreateDirectPayment(ipaymuReq)
+	if err != nil {
+		InternalError(w, fmt.Sprintf("Gagal membuat pembayaran: %v", err))
+		return
+	}
+
+	// Parse expiry time from iPaymu (format: "2025-01-01 12:00:00")
+	var expiredAt time.Time
+	t, parseErr := time.Parse("2006-01-02 15:04:05", ipaymuResp.Data.Expired)
+	if parseErr == nil && !t.IsZero() {
+		expiredAt = t
 	} else {
-		// ===== VA/PayPal via Pakasir =====
-		pakasirResp, err := h.pakasirSvc.CreateTransaction(
-			string(req.PaymentMethod),
-			order.RefID,
-			order.SellingPrice,
-		)
-		if err != nil {
-			InternalError(w, fmt.Sprintf("Gagal membuat pembayaran: %v", err))
-			return
-		}
+		// Fallback: 24 hours from now
+		expiredAt = time.Now().Add(24 * time.Hour)
+	}
 
-		// Parse expiry time
-		expiredAt, _ := time.Parse(time.RFC3339, pakasirResp.Payment.ExpiredAt)
+	// Determine QR image URL for QRIS
+	qrImageURL := ""
+	paymentNumber := ipaymuResp.Data.PaymentNo
+	if strings.ToLower(req.PaymentMethod) == "qris" && ipaymuResp.Data.QrUrl != "" {
+		qrImageURL = ipaymuResp.Data.QrUrl
+	}
 
-		payment = &model.Payment{
-			OrderID:       orderID,
-			Amount:        pakasirResp.Payment.Amount,
-			Fee:           pakasirResp.Payment.Fee,
-			TotalPayment:  pakasirResp.Payment.TotalPayment,
-			PaymentMethod: model.PaymentMethod(pakasirResp.Payment.PaymentMethod),
-			PaymentNumber: pakasirResp.Payment.PaymentNumber,
-			Status:        model.PaymentStatusPending,
-			ExpiredAt:     expiredAt,
-		}
+	paymentChannelValue := ipaymuResp.Data.PaymentChannel
+	if paymentChannelValue == "" {
+		paymentChannelValue = req.PaymentChannel // Fallback because iPaymu response might be empty
+	}
+
+	payment := &model.Payment{
+		OrderID:             orderID,
+		Amount:              float64(ipaymuResp.Data.SubTotal),
+		Fee:                 float64(ipaymuResp.Data.Fee),
+		TotalPayment:        float64(ipaymuResp.Data.Total),
+		PaymentMethod:       model.PaymentMethod(strings.ToLower(paymentChannelValue)),
+		PaymentNumber:       paymentNumber,
+		QRImageURL:          qrImageURL,
+		IpaymuTransactionID: ipaymuResp.Data.TransactionID,
+		PaymentGateway:      "ipaymu",
+		Status:              model.PaymentStatusPending,
+		ExpiredAt:           expiredAt,
 	}
 
 	if err := h.paymentRepo.Create(ctx, payment); err != nil {
@@ -337,13 +367,7 @@ func (h *OrderHandler) CancelOrder(w http.ResponseWriter, r *http.Request) {
 
 	// Cancel payment if exists
 	if order.Status == model.OrderStatusWaitingPayment {
-		// Get payment to check method
-		payment, _ := h.paymentRepo.GetByOrderID(ctx, orderID)
-		if payment != nil && payment.PaymentMethod != model.PaymentMethodQRIS {
-			// Only cancel via Pakasir for non-QRIS payments
-			// QRIS (qris.pw) auto-expires after 10 minutes, no cancel API needed
-			_ = h.pakasirSvc.CancelTransaction(order.RefID, order.SellingPrice)
-		}
+		// iPaymu payments auto-expire, no cancel API needed
 		_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusCancelled)
 	}
 
@@ -375,16 +399,16 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 	// Get payment if exists
 	payment, _ := h.paymentRepo.GetByOrderID(ctx, orderID)
 
-	// Check status with qris.pw if pending and using QRIS
-	if payment != nil && payment.Status == model.PaymentStatusPending && payment.PaymentMethod == model.PaymentMethodQRIS && payment.QrisPWTransactionID != "" {
-		qrisStatus, err := h.qrispwSvc.CheckPaymentStatus(payment.QrisPWTransactionID)
-		if err == nil && qrisStatus.Success {
-			if qrisStatus.Status == "paid" {
+	// Check status with iPaymu if pending and has iPaymu transaction ID
+	if payment != nil && payment.Status == model.PaymentStatusPending && payment.IpaymuTransactionID > 0 {
+		ipaymuStatus, err := h.ipaymuSvc.CheckTransaction(payment.IpaymuTransactionID)
+		if err == nil && ipaymuStatus.Success {
+			if ipaymuStatus.Data.Status == 1 { // 1 = success
 				_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusCompleted)
 				_ = h.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusPaid)
 				payment.Status = model.PaymentStatusCompleted
 				order.Status = model.OrderStatusPaid
-			} else if qrisStatus.Status == "expired" {
+			} else if ipaymuStatus.Data.Status == -1 { // -1 = failed/expired
 				_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusExpired)
 				payment.Status = model.PaymentStatusExpired
 			}
@@ -410,8 +434,97 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetPaymentMethods handles GET /api/v1/payment-methods
+// Fetches payment channels dynamically from iPaymu and maps to frontend format
 func (h *OrderHandler) GetPaymentMethods(w http.ResponseWriter, r *http.Request) {
-	methods := model.GetAvailablePaymentMethods()
+	channels, err := h.ipaymuSvc.GetPaymentChannels()
+	if err != nil {
+		log.Printf("[PaymentMethods] Failed to fetch from iPaymu: %v", err)
+		// Return empty list — no fallback to old static methods
+		Success(w, "", map[string]interface{}{
+			"payment_methods": []interface{}{},
+		})
+		return
+	}
+
+	// Map iPaymu channels to frontend-compatible format (lowercase)
+	type FEPaymentMethod struct {
+		Code        string `json:"code"`
+		Name        string `json:"name"`
+		Type        string `json:"type"` // e.g., "va", "qris", "cc", "cstore"
+		Description string `json:"description,omitempty"`
+		Logo        string `json:"logo,omitempty"`
+		Fee         *struct {
+			Flat    float64 `json:"flat"`
+			Percent float64 `json:"percent"`
+		} `json:"fee,omitempty"`
+	}
+
+	var methods []FEPaymentMethod
+
+	// Known logos for payment channels (iPaymu may return empty logos)
+	knownLogos := map[string]string{
+		"qris":     "https://storage.googleapis.com/ipaymu-docs/assets/qris_default.png",
+		"mpm":      "https://storage.googleapis.com/ipaymu-docs/assets/qris_default.png",
+		"bca":      "https://upld.zone.id/uploads/exi8kviq/bank-bni-seeklogo.webp",
+		"bni":      "https://upld.zone.id/uploads/exi8kviq/bank-bni-seeklogo.webp",
+		"bri":      "https://upld.zone.id/uploads/exi8kviq/bank-bri-seeklogo.webp",
+		"mandiri":  "https://upld.zone.id/uploads/exi8kviq/virtual-account.webp",
+		"cimb":     "https://upld.zone.id/uploads/exi8kviq/cimb-niaga.webp",
+		"permata":  "https://upld.zone.id/uploads/exi8kviq/permata.webp",
+		"bsi":      "https://upld.zone.id/uploads/exi8kviq/virtual-account.webp",
+		"danamon":  "https://upld.zone.id/uploads/exi8kviq/virtual-account.webp",
+		"muamalat": "https://upld.zone.id/uploads/exi8kviq/virtual-account.webp",
+		"bag":      "https://upld.zone.id/uploads/exi8kviq/bank-artha-graha-internasional.webp",
+		"cc":       "https://upld.zone.id/uploads/exi8kviq/virtual-account.webp",
+	}
+	// Category-level logos (used when individual channel has no logo)
+	categoryLogos := map[string]string{
+		"qris":   "https://storage.googleapis.com/ipaymu-docs/assets/qris_default.png",
+		"va":     "https://upld.zone.id/uploads/exi8kviq/virtual-account.webp",
+		"cstore": "https://upld.zone.id/uploads/exi8kviq/virtual-account.webp",
+		"cc":     "https://upld.zone.id/uploads/exi8kviq/virtual-account.webp",
+	}
+
+	for _, category := range channels.Data {
+		categoryType := strings.ToLower(category.Code) // e.g., "va", "qris", "cstore"
+
+		for _, ch := range category.Channels {
+			// Determine logo: prefer iPaymu → known channel → category fallback
+			logo := ch.Logo
+			if logo == "" {
+				if kl, ok := knownLogos[strings.ToLower(ch.Code)]; ok {
+					logo = kl
+				} else if cl, ok := categoryLogos[categoryType]; ok {
+					logo = cl
+				}
+			}
+
+			m := FEPaymentMethod{
+				Code:        strings.ToLower(ch.Code),
+				Name:        ch.Name,
+				Type:        categoryType,
+				Description: ch.Description,
+				Logo:        logo,
+			}
+
+			feePercent := 0.0
+			feeFlat := ch.TransactionFee.ActualFee
+			if ch.TransactionFee.ActualFeeType == "PERCENT" {
+				feePercent = ch.TransactionFee.ActualFee
+				feeFlat = 0
+			}
+
+			m.Fee = &struct {
+				Flat    float64 `json:"flat"`
+				Percent float64 `json:"percent"`
+			}{
+				Flat:    feeFlat,
+				Percent: feePercent,
+			}
+			methods = append(methods, m)
+		}
+	}
+
 	Success(w, "", map[string]interface{}{
 		"payment_methods": methods,
 	})

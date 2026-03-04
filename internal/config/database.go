@@ -59,6 +59,9 @@ func RunMigrations(pool *pgxpool.Pool) {
 		// Add qris.pw related columns to payments table
 		`ALTER TABLE payments ADD COLUMN IF NOT EXISTS qr_image_url TEXT DEFAULT ''`,
 		`ALTER TABLE payments ADD COLUMN IF NOT EXISTS qrispw_transaction_id TEXT DEFAULT ''`,
+		// Add iPaymu related columns to payments table
+		`ALTER TABLE payments ADD COLUMN IF NOT EXISTS ipaymu_transaction_id INTEGER DEFAULT 0`,
+		`ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_gateway TEXT DEFAULT ''`,
 	}
 
 	for _, m := range migrations {

@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"strings"
 )
 
 // CalculatePriceRequest is the request for price calculation
 type CalculatePriceRequest struct {
 	BuyerSKUCode  string `json:"buyer_sku_code"` // SKU produk yang dibeli
-	PaymentMethod string `json:"payment_method"` // qris, bni_va, dll
+	PaymentMethod string `json:"payment_method"` // qris, bni, bri, etc (iPaymu channel code)
 	Brand         string `json:"brand"`          // Brand untuk check username
 }
 
@@ -80,35 +81,11 @@ func (h *ValidationHandler) CalculatePrice(w http.ResponseWriter, r *http.Reques
 	// Flat admin fee as per requirement
 	var adminFee float64 = 10
 
-	// Calculate Payment Fee
+	// Calculate Payment Fee from iPaymu channels data
 	var paymentFee float64 = 0
-	method := req.PaymentMethod
+	paymentFee = h.getIpaymuFee(req.PaymentMethod, sellingPrice)
 
-	switch {
-	case method == "qris" || method == "shopeepay_qris" || method == "dana_qris":
-		// QRIS via qris.pw: Gratis (no fee)
-		paymentFee = 0
-	case method == "paypal":
-		// Paypal: 1%
-		paymentFee = sellingPrice * 0.01
-	case method == "artha_va" || method == "sampoerna_va":
-		// Specific VAs: 2000
-		paymentFee = 2000
-	case method == "bri_va" || method == "bni_va" || method == "mandiri_va" ||
-		method == "cimb_va" || method == "danamon_va" || method == "permata_va" ||
-		method == "maybank_va" || method == "bnc_va" || method == "atm_bersama_va":
-		// Bank VAs: 3500
-		paymentFee = 3500
-	default:
-		// Default fallback for VAs if not matched but contains "va"
-		if len(method) > 3 && method[len(method)-3:] == "_va" {
-			paymentFee = 3500
-		}
-	}
-
-	// Round up payment fee to nearest integer if needed, or keeping float for precision
-	// Usually fees are integers in IDR, but QRIS % might result in decimals.
-	// Let's use math.Ceil for paymentFee to be safe
+	// Round up payment fee to nearest integer
 	paymentFee = math.Ceil(paymentFee)
 
 	// Calculate total
@@ -132,4 +109,35 @@ func (h *ValidationHandler) CalculatePrice(w http.ResponseWriter, r *http.Reques
 		PaymentMethodLabel: req.PaymentMethod,
 		Breakdown:          breakdown,
 	})
+}
+
+// getIpaymuFee fetches the fee for a given payment channel from iPaymu
+func (h *ValidationHandler) getIpaymuFee(channelCode string, amount float64) float64 {
+	if h.ipaymuSvc == nil {
+		return 0
+	}
+
+	channels, err := h.ipaymuSvc.GetPaymentChannels()
+	if err != nil {
+		return 0
+	}
+
+	// Find the matching channel in any category
+	for _, category := range channels.Data {
+		for _, ch := range category.Channels {
+			if strings.EqualFold(ch.Code, channelCode) {
+				var fee float64
+				if ch.TransactionFee.ActualFeeType == "PERCENT" {
+					fee = (ch.TransactionFee.ActualFee / 100) * amount
+				} else {
+					// FLAT fee
+					fee = ch.TransactionFee.ActualFee
+				}
+				fee += ch.TransactionFee.AdditionalFee
+				return fee
+			}
+		}
+	}
+
+	return 0
 }

@@ -13,6 +13,7 @@ import (
 	"govershop-api/internal/model"
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
+	"govershop-api/internal/service/ipaymu"
 	"govershop-api/internal/service/pakasir"
 	"govershop-api/internal/service/qrispw"
 )
@@ -25,6 +26,7 @@ type WebhookHandler struct {
 	webhookRepo  *repository.WebhookLogRepository
 	userRepo     *repository.UserRepository
 	digiflazzSvc *digiflazz.Service
+	ipaymuSvc    *ipaymu.Service
 }
 
 // NewWebhookHandler creates a new WebhookHandler
@@ -35,6 +37,7 @@ func NewWebhookHandler(
 	webhookRepo *repository.WebhookLogRepository,
 	userRepo *repository.UserRepository,
 	digiflazzSvc *digiflazz.Service,
+	ipaymuSvc *ipaymu.Service,
 ) *WebhookHandler {
 	return &WebhookHandler{
 		config:       cfg,
@@ -43,7 +46,74 @@ func NewWebhookHandler(
 		webhookRepo:  webhookRepo,
 		userRepo:     userRepo,
 		digiflazzSvc: digiflazzSvc,
+		ipaymuSvc:    ipaymuSvc,
 	}
+}
+
+// HandleIpaymuWebhook handles POST /api/v1/webhook/ipaymu
+func (h *WebhookHandler) HandleIpaymuWebhook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Read body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("[Webhook] Failed to read iPaymu webhook body: %v", err)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// Log webhook
+	logID, _ := h.webhookRepo.Create(ctx, "ipaymu", string(body))
+
+	// Parse payload
+	var payload ipaymu.WebhookPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("[Webhook] Failed to parse iPaymu webhook: %v", err)
+		h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[Webhook] iPaymu webhook received: trx_id=%d, reference_id=%s, status=%s, status_code=%d",
+		payload.TrxID, payload.ReferenceID, payload.Status, payload.StatusCode)
+
+	// Only process successful payments (status_code == 1)
+	if payload.StatusCode != 1 {
+		log.Printf("[Webhook] Ignoring non-success iPaymu status: %s (code=%d)", payload.Status, payload.StatusCode)
+		h.webhookRepo.MarkProcessed(ctx, logID, "")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Find order by RefID (used as reference_id in iPaymu)
+	order, err := h.orderRepo.GetByRefID(ctx, payload.ReferenceID)
+	if err != nil {
+		log.Printf("[Webhook] iPaymu order not found: %s", payload.ReferenceID)
+		h.webhookRepo.MarkProcessed(ctx, logID, "order not found")
+		http.Error(w, "Order not found", http.StatusNotFound)
+		return
+	}
+
+	// Update payment status
+	if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusCompleted); err != nil {
+		log.Printf("[Webhook] Failed to update payment: %v", err)
+	}
+
+	// Update order status to paid
+	if err := h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusPaid); err != nil {
+		log.Printf("[Webhook] Failed to update order status: %v", err)
+		h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
+		http.Error(w, "Internal Error", http.StatusInternalServerError)
+		return
+	}
+
+	// Process topup to Digiflazz
+	go h.processTopup(order)
+
+	h.webhookRepo.MarkProcessed(ctx, logID, "")
+	log.Printf("[Webhook] iPaymu order %s processed successfully → topup triggered", order.ID)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
 // HandlePakasirWebhook handles POST /api/v1/webhook/pakasir

@@ -32,6 +32,11 @@ type Config struct {
 	QrisPWAPIKey    string
 	QrisPWSecretKey string
 
+	// iPaymu
+	IpaymuVA      string
+	IpaymuKey     string
+	IpaymuBaseURL string
+
 	// Pricing
 	DefaultMarkupPercent       float64
 	DefaultMemberMarkupPercent float64
@@ -94,6 +99,11 @@ func Load() *Config {
 		// QrisPW
 		QrisPWAPIKey:    getEnv("API_KEY_QRISPW", ""),
 		QrisPWSecretKey: getEnv("SECRET_KEY_QRISPW", ""),
+
+		// iPaymu
+		IpaymuVA:      getEnv("IPAYMU_VA", ""),
+		IpaymuKey:     getEnv("IPAYMU_KEY", ""),
+		IpaymuBaseURL: getEnv("IPAYMU_BASE_URL", "https://sandbox.ipaymu.com"),
 
 		// Pricing
 		DefaultMarkupPercent:       getEnvFloat("DEFAULT_MARKUP_PERCENT", 3.0),

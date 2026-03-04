@@ -17,6 +17,7 @@ import (
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
 	"govershop-api/internal/service/email"
+	"govershop-api/internal/service/ipaymu"
 	"govershop-api/internal/service/pakasir"
 	"govershop-api/internal/service/qrispw"
 )
@@ -48,9 +49,14 @@ func main() {
 
 	// Initialize services
 	digiflazzSvc := digiflazz.NewService(cfg)
-	pakasirSvc := pakasir.NewService(cfg)
-	qrispwSvc := qrispw.NewService(cfg)
+	pakasirSvc := pakasir.NewService(cfg) // Legacy: kept for existing production orders
+	qrispwSvc := qrispw.NewService(cfg)   // Legacy: kept for existing production orders
+	ipaymuSvc := ipaymu.NewService(cfg)
 	emailSvc := email.NewService(cfg)
+
+	// Suppress unused variable warnings for legacy services
+	_ = pakasirSvc
+	_ = qrispwSvc
 
 	// Initialize repositories
 	productRepo := repository.NewProductRepository(db)
@@ -64,14 +70,14 @@ func main() {
 
 	// Initialize handlers
 	productHandler := handler.NewProductHandler(productRepo)
-	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, digiflazzSvc, pakasirSvc, qrispwSvc, emailSvc)
-	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, digiflazzSvc)
+	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, digiflazzSvc, ipaymuSvc, emailSvc)
+	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, digiflazzSvc, ipaymuSvc)
 	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc, webhookRepo, userRepo)
 
 	// Start background jobs
 	adminHandler.StartSyncJob(context.Background())
 
-	validationHandler := handler.NewValidationHandler(cfg, productRepo, orderRepo, digiflazzSvc)
+	validationHandler := handler.NewValidationHandler(cfg, productRepo, orderRepo, digiflazzSvc, ipaymuSvc)
 	contentHandler := handler.NewContentHandler(contentRepo)
 	totpHandler := handler.NewTOTPHandler(cfg, adminSecurityRepo, orderRepo, paymentRepo, digiflazzSvc)
 	memberHandler := handler.NewMemberHandler(cfg, userRepo, productRepo, orderRepo, digiflazzSvc, emailSvc)
@@ -161,8 +167,9 @@ func main() {
 	// ==========================================
 	// WEBHOOK ROUTES
 	// ==========================================
-	mux.HandleFunc("POST /api/v1/webhook/pakasir", webhookHandler.HandlePakasirWebhook)
-	mux.HandleFunc("POST /api/v1/webhook/qrispw", webhookHandler.HandleQrisPWWebhook)
+	mux.HandleFunc("POST /api/v1/webhook/ipaymu", webhookHandler.HandleIpaymuWebhook)
+	mux.HandleFunc("POST /api/v1/webhook/pakasir", webhookHandler.HandlePakasirWebhook) // Legacy
+	mux.HandleFunc("POST /api/v1/webhook/qrispw", webhookHandler.HandleQrisPWWebhook)   // Legacy
 	mux.HandleFunc("POST /api/v1/webhook/digiflazz", webhookHandler.HandleDigiflazzWebhook)
 
 	// ==========================================
