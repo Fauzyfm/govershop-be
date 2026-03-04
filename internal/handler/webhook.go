@@ -138,15 +138,6 @@ func (h *WebhookHandler) HandleIpaymuWebhook(w http.ResponseWriter, r *http.Requ
 	log.Printf("[Webhook] iPaymu webhook received: trx_id=%d, reference_id=%s, sid=%s, status=%s, status_code=%d",
 		payload.TrxID, payload.ReferenceID, payload.SID, payload.Status, payload.StatusCode)
 
-	// Only process successful payments (status_code == 1)
-	if payload.StatusCode != 1 {
-		log.Printf("[Webhook] Ignoring non-success iPaymu status: %s (code=%d)", payload.Status, payload.StatusCode)
-		h.webhookRepo.MarkProcessed(ctx, logID, "")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-		return
-	}
-
 	// Find order by RefID — try reference_id first, then sid
 	refID := payload.ReferenceID
 	if refID == "" {
@@ -161,21 +152,33 @@ func (h *WebhookHandler) HandleIpaymuWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Update payment status
-	if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusCompleted); err != nil {
-		log.Printf("[Webhook] Failed to update payment: %v", err)
+	// Process status
+	if payload.StatusCode == 1 {
+		// SUCCESS
+		if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusCompleted); err != nil {
+			log.Printf("[Webhook] Failed to update payment: %v", err)
+		}
+		if err := h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusPaid); err != nil {
+			log.Printf("[Webhook] Failed to update order status: %v", err)
+			h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
+			http.Error(w, "Internal Error", http.StatusInternalServerError)
+			return
+		}
+		// Process topup to Digiflazz
+		go h.processTopup(order)
+	} else if payload.StatusCode == -1 || payload.StatusCode == -2 {
+		// FAILED or EXPIRED
+		log.Printf("[Webhook] Processing failed/expired iPaymu status: %s (code=%d) for order %s", payload.Status, payload.StatusCode, order.ID)
+		if err := h.paymentRepo.UpdateStatusByOrderID(ctx, order.ID, model.PaymentStatusExpired); err != nil {
+			log.Printf("[Webhook] Failed to update payment to expired: %v", err)
+		}
+		// Optional: you can update order status to cancelled/expired if needed.
+		// For now we just update payment so the customer can try again or the UI shows expired.
+		// _ = h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusCancelled)
+	} else {
+		// Pending or other unknown codes
+		log.Printf("[Webhook] Ignoring non-success iPaymu status: %s (code=%d)", payload.Status, payload.StatusCode)
 	}
-
-	// Update order status to paid
-	if err := h.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusPaid); err != nil {
-		log.Printf("[Webhook] Failed to update order status: %v", err)
-		h.webhookRepo.MarkProcessed(ctx, logID, err.Error())
-		http.Error(w, "Internal Error", http.StatusInternalServerError)
-		return
-	}
-
-	// Process topup to Digiflazz
-	go h.processTopup(order)
 
 	h.webhookRepo.MarkProcessed(ctx, logID, "")
 	log.Printf("[Webhook] iPaymu order %s processed successfully → topup triggered", order.ID)
