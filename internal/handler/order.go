@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -248,36 +247,17 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 	// Flat admin fee
 	var adminFee float64 = 10
 
-	// Calculate Payment Fee from iPaymu channels data
-	var paymentFee float64 = 0
-
-	if channels, err := h.ipaymuSvc.GetPaymentChannels(); err == nil {
-		for _, category := range channels.Data {
-			for _, ch := range category.Channels {
-				if strings.EqualFold(ch.Code, req.PaymentMethod) || strings.EqualFold(ch.Code, req.PaymentChannel) {
-					if ch.TransactionFee.ActualFeeType == "PERCENT" {
-						paymentFee = (ch.TransactionFee.ActualFee / 100) * sellingPrice
-					} else {
-						paymentFee = ch.TransactionFee.ActualFee
-					}
-					paymentFee += ch.TransactionFee.AdditionalFee
-					break
-				}
-			}
-		}
-	}
-
-	// Round up payment fee
-	paymentFee = math.Ceil(paymentFee)
-
-	totalPrice := sellingPrice + adminFee + paymentFee
+	// Amount to send to iPaymu = selling price + admin fee
+	// NOTE: Do NOT add paymentFee here — iPaymu adds its own transaction fee automatically
+	// If we add it, the customer gets charged double fee
+	ipaymuAmount := int(sellingPrice + adminFee)
 
 	// Create payment via iPaymu Direct Payment
 	ipaymuReq := ipaymu.DirectPaymentRequest{
 		Name:           customerName,
 		Phone:          customerPhone,
 		Email:          customerEmail,
-		Amount:         int(totalPrice),
+		Amount:         ipaymuAmount,
 		NotifyURL:      notifyURL,
 		PaymentMethod:  req.PaymentMethod,
 		PaymentChannel: req.PaymentChannel,
