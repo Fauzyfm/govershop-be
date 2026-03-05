@@ -498,6 +498,11 @@ func (h *OrderHandler) GetPaymentMethods(w http.ResponseWriter, r *http.Request)
 		categoryType := strings.ToLower(category.Code) // e.g., "va", "qris", "cstore"
 
 		for _, ch := range category.Channels {
+			// Only include channels that are ACTIVE in iPaymu dashboard
+			if ch.FeatureStatus != "ACTIVE" {
+				continue
+			}
+
 			// Determine logo: prefer iPaymu → known channel → category fallback
 			logo := ch.Logo
 			if logo == "" {
