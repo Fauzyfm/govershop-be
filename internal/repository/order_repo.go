@@ -79,6 +79,16 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 	return nil
 }
 
+// Delete removes an order from the database
+func (r *OrderRepository) Delete(ctx context.Context, id string) error {
+	query := `DELETE FROM orders WHERE id = $1`
+	_, err := r.db.Exec(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete order: %w", err)
+	}
+	return nil
+}
+
 // GetByID retrieves an order by ID
 func (r *OrderRepository) GetByID(ctx context.Context, id string) (*model.Order, error) {
 

@@ -293,6 +293,11 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 
 	ipaymuResp, err := h.ipaymuSvc.CreateDirectPayment(ipaymuReq)
 	if err != nil {
+		// HARD DELETE the order so it doesn't get stuck in 'pending' without payment info
+		if delErr := h.orderRepo.Delete(ctx, order.ID); delErr != nil {
+			log.Printf("[OrderHandler] Failed to delete failed payment order %s: %v", order.ID, delErr)
+		}
+
 		InternalError(w, fmt.Sprintf("Gagal membuat pembayaran: %v", err))
 		return
 	}
