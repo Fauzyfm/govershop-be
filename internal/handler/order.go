@@ -314,7 +314,17 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 
 	// Determine QR image URL for QRIS
 	qrImageURL := ""
-	paymentNumber := ipaymuResp.Data.PaymentNo
+
+	// Safely parse PaymentNo to string since ShopeePay returns numbers
+	paymentNumber := ""
+	if ipaymuResp.Data.PaymentNo != nil {
+		if fmt.Sprintf("%T", ipaymuResp.Data.PaymentNo) == "float64" {
+			paymentNumber = fmt.Sprintf("%.0f", ipaymuResp.Data.PaymentNo)
+		} else {
+			paymentNumber = fmt.Sprintf("%v", ipaymuResp.Data.PaymentNo)
+		}
+	}
+
 	if strings.ToLower(req.PaymentMethod) == "qris" && ipaymuResp.Data.QrUrl != "" {
 		qrImageURL = ipaymuResp.Data.QrUrl
 	}

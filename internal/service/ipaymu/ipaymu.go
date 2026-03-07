@@ -203,7 +203,7 @@ type DirectPaymentResponse struct {
 		TransactionID  int    `json:"TransactionId"`
 		SessionID      string `json:"SessionId"`
 		ReferenceID    string `json:"ReferenceId"`
-		PaymentNo      string `json:"PaymentNo"`
+		PaymentNo      any    `json:"PaymentNo"` // Can be string (VA) or number (ShopeePay)
 		PaymentName    string `json:"PaymentName"`
 		PaymentMethod  string `json:"PaymentMethod"`
 		PaymentChannel string `json:"PaymentChannel"`
