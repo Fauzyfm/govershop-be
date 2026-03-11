@@ -406,6 +406,9 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 		// Check if it's a "Signature Anda salah" error or IP error
 		_ = h.orderRepo.UpdateDigiflazzResponse(ctx, order.ID, model.OrderStatusFailed, "", "", "", err.Error())
 
+		// Send Telegram notification for failed topup
+		go h.telegramSvc.NotifyTopupResult(order, "Gagal", "", "", err.Error())
+
 		// REFUND IF MEMBER
 		if order.MemberID != nil {
 			amount := order.MemberPrice
@@ -445,8 +448,11 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 		resp.Data.Message,
 	)
 
-	// Send Telegram notification for topup result
-	go h.telegramSvc.NotifyTopupResult(order, resp.Data.Status, resp.Data.RC, resp.Data.SN, resp.Data.Message)
+	// Send Telegram notification only for final results (Sukses/Gagal), skip Pending
+	// Pending will be notified later when Digiflazz webhook arrives with final status
+	if resp.Data.Status == "Sukses" || resp.Data.Status == "Gagal" {
+		go h.telegramSvc.NotifyTopupResult(order, resp.Data.Status, resp.Data.RC, resp.Data.SN, resp.Data.Message)
+	}
 
 	// REFUND IF MEMBER AND FAILED
 	if orderStatus == model.OrderStatusFailed && order.MemberID != nil {
