@@ -65,6 +65,10 @@ type Config struct {
 	// Admin Alert
 	AdminAlertEmail string
 	AdminWhatsApp   string
+
+	// Telegram Notification
+	TelegramBotToken string
+	TelegramChatID   string
 }
 
 // Global config instance
@@ -133,6 +137,10 @@ func Load() *Config {
 		// Admin Alert
 		AdminAlertEmail: getEnv("ADMIN_ALERT_EMAIL", ""),
 		AdminWhatsApp:   getEnv("ADMIN_WHATSAPP", ""),
+
+		// Telegram Notification
+		TelegramBotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
+		TelegramChatID:   getEnv("TELEGRAM_CHAT_ID", ""),
 	}
 
 	AppConfig = config

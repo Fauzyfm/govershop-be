@@ -14,6 +14,7 @@ import (
 	"govershop-api/internal/repository"
 	"govershop-api/internal/service/digiflazz"
 	"govershop-api/internal/service/email"
+	"govershop-api/internal/service/telegram"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -27,6 +28,7 @@ type MemberHandler struct {
 	orderRepo    *repository.OrderRepository
 	digiflazzSvc *digiflazz.Service
 	emailSvc     *email.Service
+	telegramSvc  *telegram.Service
 }
 
 // NewMemberHandler creates a new MemberHandler
@@ -37,6 +39,7 @@ func NewMemberHandler(
 	orderRepo *repository.OrderRepository,
 	digiflazzSvc *digiflazz.Service,
 	emailSvc *email.Service,
+	telegramSvc *telegram.Service,
 ) *MemberHandler {
 	return &MemberHandler{
 		config:       cfg,
@@ -45,6 +48,7 @@ func NewMemberHandler(
 		orderRepo:    orderRepo,
 		digiflazzSvc: digiflazzSvc,
 		emailSvc:     emailSvc,
+		telegramSvc:  telegramSvc,
 	}
 }
 
@@ -507,6 +511,9 @@ func (h *MemberHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		InternalError(w, "Gagal memproses ke provider. Saldo dikembalikan.")
 		return
 	}
+
+	// Send Telegram notification for member order
+	go h.telegramSvc.NotifyOrderCreated(order)
 
 	// 7. Return Success
 	// Get latest user balance

@@ -17,6 +17,7 @@ import (
 	"govershop-api/internal/service/ipaymu"
 	"govershop-api/internal/service/pakasir"
 	"govershop-api/internal/service/qrispw"
+	"govershop-api/internal/service/telegram"
 )
 
 // WebhookHandler handles webhook callbacks from external services
@@ -28,6 +29,7 @@ type WebhookHandler struct {
 	userRepo     *repository.UserRepository
 	digiflazzSvc *digiflazz.Service
 	ipaymuSvc    *ipaymu.Service
+	telegramSvc  *telegram.Service
 }
 
 // NewWebhookHandler creates a new WebhookHandler
@@ -39,6 +41,7 @@ func NewWebhookHandler(
 	userRepo *repository.UserRepository,
 	digiflazzSvc *digiflazz.Service,
 	ipaymuSvc *ipaymu.Service,
+	telegramSvc *telegram.Service,
 ) *WebhookHandler {
 	return &WebhookHandler{
 		config:       cfg,
@@ -48,6 +51,7 @@ func NewWebhookHandler(
 		userRepo:     userRepo,
 		digiflazzSvc: digiflazzSvc,
 		ipaymuSvc:    ipaymuSvc,
+		telegramSvc:  telegramSvc,
 	}
 }
 
@@ -164,6 +168,9 @@ func (h *WebhookHandler) HandleIpaymuWebhook(w http.ResponseWriter, r *http.Requ
 			http.Error(w, "Internal Error", http.StatusInternalServerError)
 			return
 		}
+		// Send Telegram notification for payment received
+		go h.telegramSvc.NotifyPaymentReceived(order)
+
 		// Process topup to Digiflazz
 		go h.processTopup(order)
 	} else if payload.StatusCode == -1 || payload.StatusCode == -2 {
@@ -438,6 +445,9 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 		resp.Data.Message,
 	)
 
+	// Send Telegram notification for topup result
+	go h.telegramSvc.NotifyTopupResult(order, resp.Data.Status, resp.Data.RC, resp.Data.SN, resp.Data.Message)
+
 	// REFUND IF MEMBER AND FAILED
 	if orderStatus == model.OrderStatusFailed && order.MemberID != nil {
 		amount := order.MemberPrice
@@ -539,6 +549,9 @@ func (h *WebhookHandler) HandleDigiflazzWebhook(w http.ResponseWriter, r *http.R
 	}
 
 	log.Printf("[Webhook] Order %s updated to status %s", order.ID, orderStatus)
+
+	// Send Telegram notification for Digiflazz webhook update
+	go h.telegramSvc.NotifyTopupResult(order, payload.Data.Status, payload.Data.RC, payload.Data.SN, payload.Data.Message)
 
 	// REFUND IF MEMBER AND FAILED
 	if orderStatus == model.OrderStatusFailed && order.MemberID != nil {

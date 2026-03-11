@@ -20,6 +20,7 @@ import (
 	"govershop-api/internal/service/ipaymu"
 	"govershop-api/internal/service/pakasir"
 	"govershop-api/internal/service/qrispw"
+	"govershop-api/internal/service/telegram"
 )
 
 //go:embed docs/*
@@ -58,6 +59,9 @@ func main() {
 	_ = pakasirSvc
 	_ = qrispwSvc
 
+	// Initialize Telegram notification service
+	telegramSvc := telegram.NewService(cfg)
+
 	// Initialize repositories
 	productRepo := repository.NewProductRepository(db)
 	orderRepo := repository.NewOrderRepository(db)
@@ -70,8 +74,8 @@ func main() {
 
 	// Initialize handlers
 	productHandler := handler.NewProductHandler(productRepo)
-	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, userRepo, digiflazzSvc, ipaymuSvc, emailSvc)
-	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, digiflazzSvc, ipaymuSvc)
+	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, userRepo, digiflazzSvc, ipaymuSvc, emailSvc, telegramSvc)
+	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, digiflazzSvc, ipaymuSvc, telegramSvc)
 	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc, webhookRepo, userRepo)
 
 	// Start background jobs
@@ -80,7 +84,7 @@ func main() {
 	validationHandler := handler.NewValidationHandler(cfg, productRepo, orderRepo, digiflazzSvc, ipaymuSvc)
 	contentHandler := handler.NewContentHandler(contentRepo)
 	totpHandler := handler.NewTOTPHandler(cfg, adminSecurityRepo, orderRepo, paymentRepo, digiflazzSvc)
-	memberHandler := handler.NewMemberHandler(cfg, userRepo, productRepo, orderRepo, digiflazzSvc, emailSvc)
+	memberHandler := handler.NewMemberHandler(cfg, userRepo, productRepo, orderRepo, digiflazzSvc, emailSvc, telegramSvc)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)

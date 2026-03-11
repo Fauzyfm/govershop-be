@@ -16,6 +16,7 @@ import (
 	"govershop-api/internal/service/digiflazz"
 	"govershop-api/internal/service/email"
 	"govershop-api/internal/service/ipaymu"
+	"govershop-api/internal/service/telegram"
 )
 
 // OrderHandler handles order-related HTTP requests
@@ -28,6 +29,7 @@ type OrderHandler struct {
 	digiflazzSvc *digiflazz.Service
 	ipaymuSvc    *ipaymu.Service
 	emailSvc     *email.Service
+	telegramSvc  *telegram.Service
 }
 
 // NewOrderHandler creates a new OrderHandler
@@ -40,6 +42,7 @@ func NewOrderHandler(
 	digiflazzSvc *digiflazz.Service,
 	ipaymuSvc *ipaymu.Service,
 	emailSvc *email.Service,
+	telegramSvc *telegram.Service,
 ) *OrderHandler {
 	return &OrderHandler{
 		config:       cfg,
@@ -50,6 +53,7 @@ func NewOrderHandler(
 		digiflazzSvc: digiflazzSvc,
 		ipaymuSvc:    ipaymuSvc,
 		emailSvc:     emailSvc,
+		telegramSvc:  telegramSvc,
 	}
 }
 
@@ -159,6 +163,9 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		InternalError(w, "Gagal membuat order")
 		return
 	}
+
+	// Send Telegram notification asynchronously
+	go h.telegramSvc.NotifyOrderCreated(order)
 
 	Created(w, "Order berhasil dibuat", order.ToResponse(nil))
 }
