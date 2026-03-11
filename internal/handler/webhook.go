@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"govershop-api/internal/config"
 	"govershop-api/internal/model"
@@ -448,10 +449,12 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 		resp.Data.Message,
 	)
 
-	// Send Telegram notification only for final results (Sukses/Gagal), skip Pending
-	// Pending will be notified later when Digiflazz webhook arrives with final status
+	// Send Telegram notification for final results, or start polling if Pending
 	if resp.Data.Status == "Sukses" || resp.Data.Status == "Gagal" {
 		go h.telegramSvc.NotifyTopupResult(order, resp.Data.Status, resp.Data.RC, resp.Data.SN, resp.Data.Message)
+	} else {
+		// Status is Pending — start polling DB until final result
+		go h.pollOrderStatus(order.ID)
 	}
 
 	// REFUND IF MEMBER AND FAILED
@@ -467,6 +470,55 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 	}
 
 	log.Printf("[Topup] Order %s updated to status %s", order.ID, orderStatus)
+}
+
+// pollOrderStatus polls the database for order status changes and sends
+// a Telegram notification when the order reaches a final status (success/failed).
+// It checks every 2 minutes with a maximum timeout of 30 minutes.
+func (h *WebhookHandler) pollOrderStatus(orderID string) {
+	ctx := context.Background()
+	pollInterval := 2 * time.Minute
+	maxTimeout := 30 * time.Minute
+	deadline := time.Now().Add(maxTimeout)
+
+	log.Printf("[PollStatus] Started polling for order %s (every %v, max %v)", orderID, pollInterval, maxTimeout)
+
+	for {
+		// Wait before checking
+		time.Sleep(pollInterval)
+
+		// Check if we've exceeded the deadline
+		if time.Now().After(deadline) {
+			log.Printf("[PollStatus] Timeout reached for order %s — stopping polling", orderID)
+			return
+		}
+
+		// Query order from DB
+		order, err := h.orderRepo.GetByID(ctx, orderID)
+		if err != nil {
+			log.Printf("[PollStatus] Failed to get order %s: %v", orderID, err)
+			continue
+		}
+
+		log.Printf("[PollStatus] Order %s current status: %s (digiflazz: %s)", orderID, order.Status, order.DigiflazzStatus)
+
+		// Check if order has reached a final status
+		switch order.Status {
+		case model.OrderStatusSuccess:
+			log.Printf("[PollStatus] Order %s is SUCCESS — sending notification", orderID)
+			go h.telegramSvc.NotifyTopupResult(order, order.DigiflazzStatus, order.DigiflazzRC, order.SerialNumber, order.DigiflazzMsg)
+			return
+
+		case model.OrderStatusFailed:
+			log.Printf("[PollStatus] Order %s is FAILED — sending notification", orderID)
+			go h.telegramSvc.NotifyTopupResult(order, order.DigiflazzStatus, order.DigiflazzRC, order.SerialNumber, order.DigiflazzMsg)
+			return
+
+		default:
+			// Still processing/pending — continue polling
+			log.Printf("[PollStatus] Order %s still processing, will check again in %v", orderID, pollInterval)
+		}
+	}
 }
 
 // HandleDigiflazzWebhook handles POST /api/v1/webhook/digiflazz
@@ -556,8 +608,8 @@ func (h *WebhookHandler) HandleDigiflazzWebhook(w http.ResponseWriter, r *http.R
 
 	log.Printf("[Webhook] Order %s updated to status %s", order.ID, orderStatus)
 
-	// Send Telegram notification for Digiflazz webhook update
-	go h.telegramSvc.NotifyTopupResult(order, payload.Data.Status, payload.Data.RC, payload.Data.SN, payload.Data.Message)
+	// Note: Telegram notification is handled by pollOrderStatus goroutine
+	// which was started after processTopup. No need to notify here.
 
 	// REFUND IF MEMBER AND FAILED
 	if orderStatus == model.OrderStatusFailed && order.MemberID != nil {
