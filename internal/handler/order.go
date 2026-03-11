@@ -164,9 +164,6 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send Telegram notification asynchronously
-	go h.telegramSvc.NotifyOrderCreated(order)
-
 	Created(w, "Order berhasil dibuat", order.ToResponse(nil))
 }
 
@@ -365,6 +362,9 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 		InternalError(w, "Gagal update status order")
 		return
 	}
+
+	// Send Telegram notification — only after payment is successfully created
+	go h.telegramSvc.NotifyOrderCreated(order)
 
 	Success(w, "Pembayaran berhasil dibuat", payment.ToResponse())
 }
