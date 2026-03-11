@@ -304,7 +304,14 @@ func (s *Service) doRequest(endpoint string, payload interface{}) ([]byte, error
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+		// Digiflazz often returns 400 Bad Request with a valid JSON body (e.g. for failed transactions)
+		// We should return the body so the caller can parse the JSON error
+		if resp.StatusCode == http.StatusBadRequest {
+			log.Printf("[Digiflazz] API returned 400 Bad Request. Returning body for further parsing.")
+			return body, nil
+		}
+
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	return body, nil

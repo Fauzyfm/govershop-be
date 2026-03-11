@@ -419,10 +419,18 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 	payment, _ := h.paymentRepo.GetByOrderID(ctx, orderID)
 
 	// Check status with iPaymu if pending and has iPaymu transaction ID
+	// This acts as a fallback checking mechanism in case the webhook callback from iPaymu fails
 	if payment != nil && payment.Status == model.PaymentStatusPending && payment.IpaymuTransactionID > 0 {
+		log.Printf("[GetOrderStatus] (Fallback) Checking iPaymu status for TransactionID: %d", payment.IpaymuTransactionID)
 		ipaymuStatus, err := h.ipaymuSvc.CheckTransaction(payment.IpaymuTransactionID)
-		if err == nil && ipaymuStatus.Success {
+
+		if err != nil {
+			log.Printf("[GetOrderStatus] (Fallback) Error checking iPaymu status: %v", err)
+		} else if ipaymuStatus.Success {
+			log.Printf("[GetOrderStatus] (Fallback) iPaymu status response: Status=%d (1=success, 0=pending, -1=failed)", ipaymuStatus.Data.Status)
+
 			if ipaymuStatus.Data.Status == 1 { // 1 = success
+				log.Printf("[GetOrderStatus] (Fallback) Updating order %s to PAID", orderID)
 				_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusCompleted)
 				_ = h.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusPaid)
 				payment.Status = model.PaymentStatusCompleted
@@ -430,11 +438,80 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 
 				// Process topup to Digiflazz manually!
 				go h.processTopup(order)
-			} else if ipaymuStatus.Data.Status == -1 { // -1 = failed/expired
+			} else if ipaymuStatus.Data.Status == -1 || ipaymuStatus.Data.Status == -2 { // failed/expired
+				log.Printf("[GetOrderStatus] (Fallback) Updating order %s to EXPIRED/FAILED", orderID)
 				_ = h.paymentRepo.UpdateStatusByOrderID(ctx, orderID, model.PaymentStatusExpired)
 				_ = h.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusExpired)
 				payment.Status = model.PaymentStatusExpired
 				order.Status = model.OrderStatusExpired
+			}
+		} else {
+			log.Printf("[GetOrderStatus] (Fallback) iPaymu returned success=false: %s", ipaymuStatus.Message)
+		}
+	}
+
+	// Also check Digiflazz status if payment is completed but order is still processing
+	// We only want to check if the Digiflazz status is pending or empty, AND we have sent it to Digiflazz
+	if order.Status == model.OrderStatusProcessing || order.Status == model.OrderStatusPaid {
+		// Verify if it needs checking (it has been paid)
+		if order.DigiflazzStatus == "" || order.DigiflazzStatus == "Pending" {
+			log.Printf("[GetOrderStatus] Checking Digiflazz status for OrderID: %s, RefID: %s", order.ID, order.RefID)
+
+			dfResp, err := h.digiflazzSvc.CheckTransactionStatus(order.BuyerSKUCode, order.CustomerNo, order.RefID)
+			if err == nil && dfResp != nil {
+				// Update order based on Digiflazz response
+				var newOrderStatus model.OrderStatus
+
+				switch dfResp.Data.Status {
+				case "Sukses":
+					newOrderStatus = model.OrderStatusSuccess
+				case "Gagal":
+					newOrderStatus = model.OrderStatusFailed
+				default:
+					newOrderStatus = model.OrderStatusProcessing
+				}
+
+				// Only update if status actually changed or we got new info (like SN)
+				if newOrderStatus != order.Status || dfResp.Data.SN != order.SerialNumber || dfResp.Data.Status != order.DigiflazzStatus || dfResp.Data.Message != order.DigiflazzMsg {
+					log.Printf("[GetOrderStatus] Updating order %s from Digiflazz Check: status=%s, SN=%s", order.ID, dfResp.Data.Status, dfResp.Data.SN)
+
+					errUpdate := h.orderRepo.UpdateDigiflazzResponse(
+						ctx,
+						order.ID,
+						newOrderStatus,
+						dfResp.Data.Status,
+						dfResp.Data.RC,
+						dfResp.Data.SN,
+						dfResp.Data.Message,
+					)
+
+					if errUpdate == nil {
+						// Process refund if failed
+						if newOrderStatus == model.OrderStatusFailed && order.MemberID != nil && order.Status != model.OrderStatusFailed {
+							amount := order.MemberPrice
+							if amount == nil {
+								amount = &order.SellingPrice
+							}
+							desc := fmt.Sprintf("Refund Gagal Transaksi (Cek Status) %s", order.RefID)
+							if errRefund := h.userRepo.TopupBalance(ctx, *order.MemberID, *amount, desc, "SYSTEM"); errRefund != nil {
+								log.Printf("CRITICAL: Failed to refund member balance for order %s: %v", order.ID, errRefund)
+							}
+						}
+
+						// Update the order object for the API response
+						order.Status = newOrderStatus
+						order.DigiflazzStatus = dfResp.Data.Status
+						order.DigiflazzRC = dfResp.Data.RC
+						order.SerialNumber = dfResp.Data.SN
+						order.DigiflazzMsg = dfResp.Data.Message
+					} else {
+						log.Printf("[GetOrderStatus] Failed to update order %s to DB: %v", order.ID, errUpdate)
+					}
+				}
+			} else {
+				if err != nil {
+					log.Printf("[GetOrderStatus] Error checking Digiflazz status: %v", err)
+				}
 			}
 		}
 	}
