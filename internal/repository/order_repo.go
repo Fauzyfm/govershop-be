@@ -58,9 +58,11 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 			ref_id, buyer_sku_code, product_name, customer_no,
 			buy_price, selling_price, status,
 			customer_email, customer_phone, customer_name,
-			member_id, member_price, order_source
+			member_id, member_price, order_source,
+			digiflazz_status, digiflazz_rc, digiflazz_message, serial_number
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+			$14, $15, $16, $17
 		)
 		RETURNING id, created_at, updated_at
 	`
@@ -70,6 +72,7 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 		order.BuyPrice, order.SellingPrice, order.Status,
 		order.CustomerEmail, order.CustomerPhone, order.CustomerName,
 		order.MemberID, order.MemberPrice, order.OrderSource,
+		order.DigiflazzStatus, order.DigiflazzRC, order.DigiflazzMsg, order.SerialNumber,
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
 
 	if err != nil {
