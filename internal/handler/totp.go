@@ -16,6 +16,7 @@ import (
 	"govershop-api/internal/service/digiflazz"
 
 	"github.com/pquerna/otp/totp"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // TOTPHandler handles TOTP-related operations
@@ -24,6 +25,7 @@ type TOTPHandler struct {
 	securityRepo     *repository.AdminSecurityRepository
 	orderRepo        *repository.OrderRepository
 	paymentRepo      *repository.PaymentRepository
+	userRepo         *repository.UserRepository
 	digiflazzSvc     *digiflazz.Service
 	maxTopupsPerHour int
 }
@@ -34,6 +36,7 @@ func NewTOTPHandler(
 	securityRepo *repository.AdminSecurityRepository,
 	orderRepo *repository.OrderRepository,
 	paymentRepo *repository.PaymentRepository,
+	userRepo *repository.UserRepository,
 	digiflazzSvc *digiflazz.Service,
 ) *TOTPHandler {
 	return &TOTPHandler{
@@ -41,6 +44,7 @@ func NewTOTPHandler(
 		securityRepo:     securityRepo,
 		orderRepo:        orderRepo,
 		paymentRepo:      paymentRepo,
+		userRepo:         userRepo,
 		digiflazzSvc:     digiflazzSvc,
 		maxTopupsPerHour: 20, // Rate limit
 	}
@@ -399,8 +403,16 @@ func (h *TOTPHandler) CustomTopup(w http.ResponseWriter, r *http.Request) {
 
 	// ============ AUTHENTICATION ============
 
-	// 1. Verify Admin Password
-	if req.Password != h.config.AdminPassword {
+	// 1. Verify Admin Password (from Database)
+	adminUser, err := h.userRepo.GetByUsername(ctx, h.config.AdminUsername)
+	if err != nil || adminUser == nil {
+		h.securityRepo.CreateAuditLog(ctx, "custom_topup", "", getClientIP(r),
+			map[string]interface{}{"reason": "admin_not_found", "sku": req.SKU}, false, "Admin user not found")
+		InternalError(w, "Sistem error saat verifikasi admin")
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(adminUser.Password), []byte(req.Password)); err != nil {
 		h.securityRepo.CreateAuditLog(ctx, "custom_topup", "", getClientIP(r),
 			map[string]interface{}{"reason": "invalid_password", "sku": req.SKU}, false, "Invalid password")
 		Unauthorized(w, "Password admin tidak valid")

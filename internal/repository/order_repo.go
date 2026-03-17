@@ -333,6 +333,97 @@ func (r *OrderRepository) getAllInternal(ctx context.Context, limit, offset int,
 	return orders, total, nil
 }
 
+// OrderSummary holds aggregate stats for order listing
+type OrderSummary struct {
+	TotalRevenue     float64
+	TotalCost        float64
+	TotalProfit      float64
+	SuccessfulOrders int
+}
+
+// GetOrderSummary calculates aggregate summary stats across ALL matching orders (no pagination)
+func (r *OrderRepository) GetOrderSummary(ctx context.Context, search, status, dateFrom, dateTo, digiflazzStatus string) (*OrderSummary, error) {
+	var conditions []string
+	var args []interface{}
+	argCounter := 1
+
+	if status != "" && status != "all" {
+		if status == "pending" {
+			conditions = append(conditions, fmt.Sprintf("status IN ($%d, $%d)", argCounter, argCounter+1))
+			args = append(args, "pending", "waiting_payment")
+			argCounter += 2
+		} else {
+			conditions = append(conditions, fmt.Sprintf("status = $%d", argCounter))
+			args = append(args, status)
+			argCounter++
+		}
+	}
+
+	if search != "" {
+		searchCondition := fmt.Sprintf("(ref_id ILIKE $%d OR customer_no ILIKE $%d OR product_name ILIKE $%d OR serial_number ILIKE $%d OR customer_email ILIKE $%d OR customer_phone ILIKE $%d)", argCounter, argCounter, argCounter, argCounter, argCounter, argCounter)
+		conditions = append(conditions, searchCondition)
+		args = append(args, "%"+search+"%")
+		argCounter++
+	}
+
+	if dateFrom != "" {
+		conditions = append(conditions, fmt.Sprintf("DATE(created_at) >= $%d", argCounter))
+		args = append(args, dateFrom)
+		argCounter++
+	}
+	if dateTo != "" {
+		conditions = append(conditions, fmt.Sprintf("DATE(created_at) <= $%d", argCounter))
+		args = append(args, dateTo)
+		argCounter++
+	}
+
+	if digiflazzStatus != "" && digiflazzStatus != "all" {
+		conditions = append(conditions, fmt.Sprintf("digiflazz_status = $%d", argCounter))
+		args = append(args, digiflazzStatus)
+		argCounter++
+	}
+
+	whereStmt := ""
+	if len(conditions) > 0 {
+		whereStmt = " WHERE " + conditions[0]
+		for i := 1; i < len(conditions); i++ {
+			whereStmt += " AND " + conditions[i]
+		}
+	}
+
+	// Build the success filter for revenue/profit (same logic as handler)
+	// Only count success/processing/paid orders, exclude admin_gift from revenue
+	successWhere := whereStmt
+	if successWhere == "" {
+		successWhere = " WHERE status IN ('success', 'processing', 'paid') AND (COALESCE(order_source, 'website') != 'admin_gift')"
+	} else {
+		successWhere += " AND status IN ('success', 'processing', 'paid') AND (COALESCE(order_source, 'website') != 'admin_gift')"
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			COALESCE(SUM(selling_price), 0),
+			COALESCE(SUM(buy_price), 0),
+			COALESCE(SUM(selling_price - buy_price), 0),
+			COUNT(*)
+		FROM orders
+		%s
+	`, successWhere)
+
+	summary := &OrderSummary{}
+	err := r.db.QueryRow(ctx, query, args...).Scan(
+		&summary.TotalRevenue,
+		&summary.TotalCost,
+		&summary.TotalProfit,
+		&summary.SuccessfulOrders,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get order summary: %w", err)
+	}
+
+	return summary, nil
+}
+
 // GetByCustomerPhone retrieves orders by customer phone
 func (r *OrderRepository) GetByCustomerPhone(ctx context.Context, phone string, limit int) ([]model.Order, error) {
 	query := `

@@ -83,7 +83,7 @@ func main() {
 
 	validationHandler := handler.NewValidationHandler(cfg, productRepo, orderRepo, digiflazzSvc, ipaymuSvc)
 	contentHandler := handler.NewContentHandler(contentRepo)
-	totpHandler := handler.NewTOTPHandler(cfg, adminSecurityRepo, orderRepo, paymentRepo, digiflazzSvc)
+	totpHandler := handler.NewTOTPHandler(cfg, adminSecurityRepo, orderRepo, paymentRepo, userRepo, digiflazzSvc)
 	memberHandler := handler.NewMemberHandler(cfg, userRepo, productRepo, orderRepo, digiflazzSvc, emailSvc, telegramSvc)
 
 	// Initialize middleware

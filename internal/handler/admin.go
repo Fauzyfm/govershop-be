@@ -242,6 +242,13 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get aggregate summary across ALL matching orders (not just current page)
+	orderSummary, err := h.orderRepo.GetOrderSummary(ctx, search, status, dateFrom, dateTo, digiflazzStatus)
+	if err != nil {
+		log.Printf("[GetOrders] Failed to get order summary: %v", err)
+		orderSummary = &repository.OrderSummary{}
+	}
+
 	// Enrich orders with payment status and profit
 	type AdminOrderResponse struct {
 		ID              string   `json:"id"`
@@ -267,9 +274,7 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 		MemberPrice     *float64 `json:"member_price,omitempty"`
 	}
 
-	// Rp 10 biaya admin per transaksi
-	var totalRevenue, totalCost, totalProfit float64
-	var successfulOrders int
+
 
 	var enrichedOrders []AdminOrderResponse
 	for _, order := range orders {
@@ -320,16 +325,7 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 
 		resp.PaymentStatus = currentPaymentStatus
 
-		// Calculate summary for successful orders only
-		if order.Status == "success" || order.Status == "processing" || order.Status == "paid" {
-			// Include website, admin_cash, and member in revenue/profit stats
-			if order.OrderSource == "website" || order.OrderSource == "admin_cash" || order.OrderSource == "member" || order.OrderSource == "" {
-				totalRevenue += order.SellingPrice
-				totalCost += order.BuyPrice
-				totalProfit += profit
-			}
-			successfulOrders++
-		}
+
 
 		enrichedOrders = append(enrichedOrders, resp)
 	}
@@ -342,10 +338,10 @@ func (h *AdminHandler) GetOrders(w http.ResponseWriter, r *http.Request) {
 		"date_from": dateFrom,
 		"date_to":   dateTo,
 		"summary": map[string]interface{}{
-			"total_revenue":     totalRevenue,
-			"total_cost":        totalCost,
-			"total_profit":      totalProfit,
-			"successful_orders": successfulOrders,
+			"total_revenue":     orderSummary.TotalRevenue,
+			"total_cost":        orderSummary.TotalCost,
+			"total_profit":      orderSummary.TotalProfit,
+			"successful_orders": orderSummary.SuccessfulOrders,
 		},
 	})
 }
