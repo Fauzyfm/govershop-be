@@ -219,3 +219,48 @@ func (s *Service) NotifyTopupResult(order *model.Order, digiflazzStatus, rc, sn,
 		log.Printf("[Telegram] Failed to send topup result notification: %v", err)
 	}
 }
+
+// NotifyInsufficientBalance sends alert when Digiflazz balance is too low to process an order
+func (s *Service) NotifyInsufficientBalance(productName, productSKU string, buyPrice, currentBalance, deficit float64, customerPhone, customerEmail string) {
+	if !s.enabled {
+		return
+	}
+
+	emailDisplay := customerEmail
+	if emailDisplay == "" {
+		emailDisplay = "-"
+	}
+	phoneDisplay := customerPhone
+	if phoneDisplay == "" {
+		phoneDisplay = "-"
+	}
+
+	msg := fmt.Sprintf(
+		"⚠️ <b>SALDO DIGIFLAZZ KURANG. URGENT❗❗</b>\n"+
+			"━━━━━━━━━━━━━━━\n"+
+			"📦 Produk: <b>%s</b>\n"+
+			"🔢 SKU: <code>%s</code>\n"+
+			"💰 Harga Beli: <b>%s</b>\n"+
+			"💳 Saldo Saat Ini: <b>%s</b>\n"+
+			"📉 Kekurangan: <b>%s</b>\n"+
+			"📞 No HP: <code>%s</code>\n"+
+			"✉️ Email: %s\n"+
+			"━━━━━━━━━━━━━━━\n"+
+			"❗ Order ditolak otomatis.\n"+
+			"Ada customer mau beli produk tersebut tapi tidak bisa karena saldo Digiflazz kurang❗❗❗\n"+
+			"Segera topup saldo Digiflazz!\n"+
+			"🕐 %s",
+		productName,
+		productSKU,
+		formatRupiah(buyPrice),
+		formatRupiah(currentBalance),
+		formatRupiah(deficit),
+		phoneDisplay,
+		emailDisplay,
+		time.Now().Format("02 Jan 2006 15:04 WIB"),
+	)
+
+	if err := s.sendMessage(msg); err != nil {
+		log.Printf("[Telegram] Failed to send insufficient balance alert: %v", err)
+	}
+}

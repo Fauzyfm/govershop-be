@@ -99,28 +99,8 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 			deficit := product.BuyPrice - balance
 			log.Printf("[CreateOrder] Insufficient provider balance for product=%s", product.ProductName)
 
-			// Send admin email alert asynchronously
-			if h.config.AdminAlertEmail != "" {
-				go func() {
-					now := time.Now()
-					alertData := email.BalanceAlertData{
-						Date:           now.Format("02 January 2006"),
-						Time:           now.Format("15:04") + " WIB",
-						ProductName:    product.ProductName,
-						ProductSKU:     product.BuyerSKUCode,
-						CustomerPhone:  req.CustomerPhone,
-						CustomerEmail:  req.CustomerEmail,
-						BuyPrice:       product.BuyPrice,
-						CurrentBalance: balance,
-						Deficit:        deficit,
-					}
-					if err := h.emailSvc.SendAdminBalanceAlert(h.config.AdminAlertEmail, alertData); err != nil {
-						log.Printf("[CreateOrder] Failed to send admin alert email")
-					} else {
-						log.Printf("[CreateOrder] Admin balance alert sent")
-					}
-				}()
-			}
+			// Send admin Telegram alert asynchronously
+			go h.telegramSvc.NotifyInsufficientBalance(product.ProductName, product.BuyerSKUCode, product.BuyPrice, balance, deficit, req.CustomerPhone, req.CustomerEmail)
 
 			// Return specific error code for frontend to handle
 			JSON(w, http.StatusServiceUnavailable, map[string]interface{}{
@@ -307,8 +287,10 @@ func (h *OrderHandler) InitiatePayment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse expiry time from iPaymu (format: "2025-01-01 12:00:00")
+	// iPaymu returns time in WIB (Asia/Jakarta), so we must parse with that timezone
 	var expiredAt time.Time
-	t, parseErr := time.Parse("2006-01-02 15:04:05", ipaymuResp.Data.Expired)
+	wib, _ := time.LoadLocation("Asia/Jakarta")
+	t, parseErr := time.ParseInLocation("2006-01-02 15:04:05", ipaymuResp.Data.Expired, wib)
 	if parseErr == nil && !t.IsZero() {
 		expiredAt = t
 	} else {
