@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -441,8 +442,8 @@ func (h *MemberHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Calculate Member Price
 	defaultMarkup := 0.0 // Default member markup
-	resp := product.ToMemberResponse(defaultMarkup)
-	amount := resp.Price
+	memberResp := product.ToMemberResponse(defaultMarkup)
+	amount := memberResp.Price
 
 	// 3. Generate Order Ref ID (INV-...)
 	refID := fmt.Sprintf("INV-%d-%s", time.Now().Unix(), generateRandomString(5))
@@ -496,7 +497,8 @@ func (h *MemberHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		RefID:        refID,
 	}
 
-	_, err = h.digiflazzSvc.CreateTransaction(dfReq)
+	var resp *digiflazz.TopupResponse
+	resp, err = h.digiflazzSvc.CreateTransaction(dfReq)
 
 	// Handle failure calling Digiflazz
 	if err != nil {
@@ -508,12 +510,45 @@ func (h *MemberHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		refundDesc := fmt.Sprintf("Refund Gagal Transaksi %s", refID)
 		h.userRepo.TopupBalance(ctx, userID, amount, refundDesc, "SYSTEM")
 
+		// Send Telegram notification for failed topup
+		go h.telegramSvc.NotifyTopupResult(order, "Gagal", "", "", err.Error())
+
 		InternalError(w, "Gagal memproses ke provider. Saldo dikembalikan.")
 		return
 	}
 
-	// Send Telegram notification for member order
+	log.Printf("[MemberTopup] Digiflazz response: order=%s status=%s", order.ID, resp.Data.Status)
+
+	// Map Digiflazz status to order status
+	var orderStatus model.OrderStatus
+	switch resp.Data.Status {
+	case "Sukses":
+		orderStatus = model.OrderStatusSuccess
+	case "Gagal":
+		orderStatus = model.OrderStatusFailed
+	default:
+		orderStatus = model.OrderStatusProcessing
+	}
+
+	// Update order with Digiflazz response
+	h.orderRepo.UpdateDigiflazzResponse(ctx, order.ID, orderStatus, resp.Data.Status, resp.Data.RC, resp.Data.SN, resp.Data.Message)
+
+	// Send Telegram notification for member order created
 	go h.telegramSvc.NotifyOrderCreated(order)
+
+	// Send Telegram notification for final results, or start polling if Pending
+	if resp.Data.Status == "Sukses" || resp.Data.Status == "Gagal" {
+		go h.telegramSvc.NotifyTopupResult(order, resp.Data.Status, resp.Data.RC, resp.Data.SN, resp.Data.Message)
+	} else {
+		// Status is Pending — start polling DB until final result
+		go h.pollMemberOrderStatus(order.ID, userID, amount)
+	}
+
+	// Refund if Digiflazz immediately returns Gagal
+	if orderStatus == model.OrderStatusFailed {
+		refundDesc := fmt.Sprintf("Refund Gagal Transaksi %s", refID)
+		h.userRepo.TopupBalance(ctx, userID, amount, refundDesc, "SYSTEM")
+	}
 
 	// 7. Return Success
 	// Get latest user balance
@@ -525,10 +560,65 @@ func (h *MemberHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		"data": map[string]interface{}{
 			"order_id": order.ID,
 			"ref_id":   order.RefID,
-			"status":   order.Status,
+			"status":   orderStatus,
 			"balance":  user.Balance,
 		},
 	})
+}
+
+// pollMemberOrderStatus polls the database for member order status changes and sends
+// a Telegram notification when the order reaches a final status (success/failed).
+// It also handles refund if the order fails. Checks every 2 minutes, max 30 minutes.
+func (h *MemberHandler) pollMemberOrderStatus(orderID string, memberID int, amount float64) {
+	ctx := context.Background()
+	pollInterval := 2 * time.Minute
+	maxTimeout := 30 * time.Minute
+	deadline := time.Now().Add(maxTimeout)
+
+	log.Printf("[PollMemberStatus] Started polling for member order %s (every %v, max %v)", orderID, pollInterval, maxTimeout)
+
+	for {
+		// Wait before checking
+		time.Sleep(pollInterval)
+
+		// Check if we've exceeded the deadline
+		if time.Now().After(deadline) {
+			log.Printf("[PollMemberStatus] Timeout reached for order %s — stopping polling", orderID)
+			return
+		}
+
+		// Query order from DB
+		order, err := h.orderRepo.GetByID(ctx, orderID)
+		if err != nil {
+			log.Printf("[PollMemberStatus] Failed to get order %s: %v", orderID, err)
+			continue
+		}
+
+		log.Printf("[PollMemberStatus] Order %s current status: %s (digiflazz: %s)", orderID, order.Status, order.DigiflazzStatus)
+
+		// Check if order has reached a final status
+		switch order.Status {
+		case model.OrderStatusSuccess:
+			log.Printf("[PollMemberStatus] Order %s is SUCCESS — sending notification", orderID)
+			go h.telegramSvc.NotifyTopupResult(order, order.DigiflazzStatus, order.DigiflazzRC, order.SerialNumber, order.DigiflazzMsg)
+			return
+
+		case model.OrderStatusFailed:
+			log.Printf("[PollMemberStatus] Order %s is FAILED — sending notification and refunding", orderID)
+			go h.telegramSvc.NotifyTopupResult(order, order.DigiflazzStatus, order.DigiflazzRC, order.SerialNumber, order.DigiflazzMsg)
+
+			// Refund member balance
+			refundDesc := fmt.Sprintf("Refund Gagal Transaksi %s", order.RefID)
+			if err := h.userRepo.TopupBalance(ctx, memberID, amount, refundDesc, "SYSTEM"); err != nil {
+				log.Printf("CRITICAL: Failed to refund member balance for order %s: %v", orderID, err)
+			}
+			return
+
+		default:
+			// Still processing/pending — continue polling
+			log.Printf("[PollMemberStatus] Order %s still processing, will check again in %v", orderID, pollInterval)
+		}
+	}
 }
 
 // ValidateMemberAccount handles POST /api/v1/member/validate-account

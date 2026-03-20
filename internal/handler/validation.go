@@ -108,7 +108,15 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 	})
 
 	if err != nil {
-		InternalError(w, fmt.Sprintf("Gagal validasi akun: %v", err))
+		// Digiflazz error — jangan blokir topup, kembalikan manual validation
+		log.Printf("[Validation] Digiflazz check user error for %s: %v", req.Brand, err)
+		Success(w, "Validasi manual (provider error)", ValidateAccountResponse{
+			IsValid:     true,
+			AccountName: "",
+			CustomerNo:  req.CustomerNo,
+			Brand:       req.Brand,
+			Message:     "Sistem cek username sedang gangguan. Pastikan User ID sudah benar. Kesalahan input bukan tanggung jawab kami.",
+		})
 		return
 	}
 
@@ -200,12 +208,24 @@ func (h *ValidationHandler) ValidateAccount(w http.ResponseWriter, r *http.Reque
 	}
 	// ------------------------------------------
 
-	Success(w, "Validasi berhasil", ValidateAccountResponse{
-		IsValid:       isValid,
-		AccountName:   accountName,
-		CustomerNo:    req.CustomerNo,
-		Brand:         req.Brand,
-		Message:       message,
-		ValidationFee: checkProduct.SellingPrice,
-	})
+	if isValid {
+		Success(w, "Validasi berhasil", ValidateAccountResponse{
+			IsValid:       true,
+			AccountName:   accountName,
+			CustomerNo:    req.CustomerNo,
+			Brand:         req.Brand,
+			Message:       message,
+			ValidationFee: checkProduct.SellingPrice,
+		})
+	} else {
+		// Check user gagal (seller error/gangguan) — jangan blokir topup
+		log.Printf("[Validation] Check user failed for %s (customer: %s): %s", req.Brand, req.CustomerNo, message)
+		Success(w, "Validasi manual (check gagal)", ValidateAccountResponse{
+			IsValid:     true,
+			AccountName: "",
+			CustomerNo:  req.CustomerNo,
+			Brand:       req.Brand,
+			Message:     "Sistem cek username sedang gangguan. Pastikan User ID sudah benar. Kesalahan input bukan tanggung jawab kami.",
+		})
+	}
 }
