@@ -413,8 +413,8 @@ func (h *AdminHandler) SimulatePayment(w http.ResponseWriter, r *http.Request) {
 
 // StartSyncJob starts the background product sync job
 func (h *AdminHandler) StartSyncJob(ctx context.Context) {
-	// Sync every 8 hours as requested
-	interval := 8 * time.Hour
+	// Sync every 2 hours as requested
+	interval := 2 * time.Hour
 	ticker := time.NewTicker(interval)
 
 	log.Printf("[Sync] Auto-sync job initialized. Running every %v", interval)
