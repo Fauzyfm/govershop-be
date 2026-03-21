@@ -76,7 +76,17 @@ type PaymentResponse struct {
 
 // ToResponse converts Payment to PaymentResponse for FE
 func (p *Payment) ToResponse() PaymentResponse {
-	expiredIn := time.Until(p.ExpiredAt).Seconds()
+	// IMPORTANT: expired_at is stored as TIMESTAMP (without timezone) in PostgreSQL.
+	// The value was originally in WIB (Asia/Jakarta) but pgx reads it back as UTC.
+	// We must re-interpret the raw date/time values as WIB to get the correct time.
+	wib, _ := time.LoadLocation("Asia/Jakarta")
+	expiredAtWIB := time.Date(
+		p.ExpiredAt.Year(), p.ExpiredAt.Month(), p.ExpiredAt.Day(),
+		p.ExpiredAt.Hour(), p.ExpiredAt.Minute(), p.ExpiredAt.Second(),
+		p.ExpiredAt.Nanosecond(), wib,
+	)
+
+	expiredIn := time.Until(expiredAtWIB).Seconds()
 	if expiredIn < 0 {
 		expiredIn = 0
 	}
@@ -90,7 +100,7 @@ func (p *Payment) ToResponse() PaymentResponse {
 		PaymentMethod: p.PaymentMethod,
 		PaymentNumber: p.PaymentNumber,
 		Status:        p.Status,
-		ExpiredAt:     p.ExpiredAt,
+		ExpiredAt:     expiredAtWIB,
 		ExpiredIn:     int64(expiredIn),
 	}
 
