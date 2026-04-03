@@ -208,6 +208,18 @@ func (r *OrderRepository) UpdateCustomerNo(ctx context.Context, id, customerNo s
 	return nil
 }
 
+// UpdateRefID updates the ref_id of an order (for retry topups)
+// When admin retries a failed order, a new ref_id is generated for Digiflazz.
+// This must be saved so the Digiflazz webhook can find the order by the new ref_id.
+func (r *OrderRepository) UpdateRefID(ctx context.Context, id, newRefID string) error {
+	query := `UPDATE orders SET ref_id = $2, updated_at = NOW() WHERE id = $1`
+	_, err := r.db.Exec(ctx, query, id, newRefID)
+	if err != nil {
+		return fmt.Errorf("failed to update ref_id: %w", err)
+	}
+	return nil
+}
+
 // GetTotalRevenue calculate total revenue from successful orders
 func (r *OrderRepository) GetTotalRevenue(ctx context.Context) (float64, error) {
 	query := `

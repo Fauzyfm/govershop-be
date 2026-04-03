@@ -296,6 +296,16 @@ func (h *TOTPHandler) ManualTopup(w http.ResponseWriter, r *http.Request) {
 	// Generate new ref_id for retry
 	newRefID := fmt.Sprintf("RETRY-%d", time.Now().UnixMilli())
 
+	// Save new ref_id to database BEFORE calling Digiflazz
+	// This is critical: when Digiflazz sends a webhook later, it uses ref_id to find the order.
+	// Without this, the webhook would fail to find the order and the status would never update.
+	if err := h.orderRepo.UpdateRefID(ctx, orderID, newRefID); err != nil {
+		h.securityRepo.CreateAuditLog(ctx, "manual_topup", orderID, getClientIP(r),
+			map[string]interface{}{"reason": "ref_id_update_failed"}, false, err.Error())
+		InternalError(w, "Gagal update ref_id untuk retry")
+		return
+	}
+
 	// Call Digiflazz
 	resp, err := h.digiflazzSvc.CreateTransaction(digiflazz.TopupRequest{
 		BuyerSKUCode: order.BuyerSKUCode,
