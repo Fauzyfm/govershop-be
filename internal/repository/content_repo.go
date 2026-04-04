@@ -271,6 +271,8 @@ func (r *ContentRepository) GetAllBrandSettings(ctx context.Context) ([]model.Br
 		       COALESCE(topup_steps, '[]'::jsonb) as topup_steps, 
 		       COALESCE(description, '') as description,
 		       display_category, COALESCE(display_sort_order, 0) as display_sort_order,
+		       COALESCE(input_fields, '[]'::jsonb) as input_fields,
+		       COALESCE(input_separator, '') as input_separator,
 		       created_at, updated_at
 		FROM brand_settings
 		ORDER BY brand_name ASC
@@ -286,10 +288,12 @@ func (r *ContentRepository) GetAllBrandSettings(ctx context.Context) ([]model.Br
 	for rows.Next() {
 		var b model.BrandSetting
 		var topupStepsJSON []byte
+		var inputFieldsJSON []byte
 		err := rows.Scan(
 			&b.BrandName, &b.Slug, &b.CustomImageURL, &b.IsBestSeller, &b.IsVisible, &b.Status,
 			&topupStepsJSON, &b.Description,
 			&b.DisplayCategory, &b.DisplaySortOrder,
+			&inputFieldsJSON, &b.InputSeparator,
 			&b.CreatedAt, &b.UpdatedAt,
 		)
 		if err != nil {
@@ -298,7 +302,13 @@ func (r *ContentRepository) GetAllBrandSettings(ctx context.Context) ([]model.Br
 		// Parse JSONB topup_steps
 		if len(topupStepsJSON) > 0 {
 			if err := json.Unmarshal(topupStepsJSON, &b.TopupSteps); err != nil {
-				b.TopupSteps = []model.TopupStep{} // Default empty if parse fails
+				b.TopupSteps = []model.TopupStep{}
+			}
+		}
+		// Parse JSONB input_fields
+		if len(inputFieldsJSON) > 0 {
+			if err := json.Unmarshal(inputFieldsJSON, &b.InputFields); err != nil {
+				b.InputFields = []model.InputField{}
 			}
 		}
 		items = append(items, b)
@@ -315,9 +325,15 @@ func (r *ContentRepository) UpsertBrandSetting(ctx context.Context, bs *model.Br
 		topupStepsJSON = []byte("[]")
 	}
 
+	// Marshal input_fields to JSON
+	inputFieldsJSON, err := json.Marshal(bs.InputFields)
+	if err != nil {
+		inputFieldsJSON = []byte("[]")
+	}
+
 	query := `
-		INSERT INTO brand_settings (brand_name, slug, custom_image_url, is_best_seller, is_visible, status, topup_steps, description, display_category, display_sort_order)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO brand_settings (brand_name, slug, custom_image_url, is_best_seller, is_visible, status, topup_steps, description, display_category, display_sort_order, input_fields, input_separator)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (brand_name) DO UPDATE SET
 		slug = EXCLUDED.slug,
 		custom_image_url = EXCLUDED.custom_image_url,
@@ -328,12 +344,14 @@ func (r *ContentRepository) UpsertBrandSetting(ctx context.Context, bs *model.Br
 		description = EXCLUDED.description,
 		display_category = EXCLUDED.display_category,
 		display_sort_order = EXCLUDED.display_sort_order,
+		input_fields = EXCLUDED.input_fields,
+		input_separator = EXCLUDED.input_separator,
 		updated_at = NOW()
 	`
 
 	_, err = r.db.Exec(ctx, query,
 		bs.BrandName, bs.Slug, bs.CustomImageURL, bs.IsBestSeller, bs.IsVisible, bs.Status, topupStepsJSON, bs.Description,
-		bs.DisplayCategory, bs.DisplaySortOrder,
+		bs.DisplayCategory, bs.DisplaySortOrder, inputFieldsJSON, bs.InputSeparator,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert brand setting: %w", err)
@@ -349,6 +367,8 @@ func (r *ContentRepository) GetBrandSetting(ctx context.Context, brandName strin
 		       COALESCE(topup_steps, '[]'::jsonb) as topup_steps,
 		       COALESCE(description, '') as description,
 		       display_category, COALESCE(display_sort_order, 0) as display_sort_order,
+		       COALESCE(input_fields, '[]'::jsonb) as input_fields,
+		       COALESCE(input_separator, '') as input_separator,
 		       created_at, updated_at
 		FROM brand_settings
 		WHERE brand_name = $1
@@ -356,10 +376,12 @@ func (r *ContentRepository) GetBrandSetting(ctx context.Context, brandName strin
 
 	var b model.BrandSetting
 	var topupStepsJSON []byte
+	var inputFieldsJSON []byte
 	err := r.db.QueryRow(ctx, query, brandName).Scan(
 		&b.BrandName, &b.Slug, &b.CustomImageURL, &b.IsBestSeller, &b.IsVisible, &b.Status,
 		&topupStepsJSON, &b.Description,
 		&b.DisplayCategory, &b.DisplaySortOrder,
+		&inputFieldsJSON, &b.InputSeparator,
 		&b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {
@@ -370,6 +392,13 @@ func (r *ContentRepository) GetBrandSetting(ctx context.Context, brandName strin
 	if len(topupStepsJSON) > 0 {
 		if err := json.Unmarshal(topupStepsJSON, &b.TopupSteps); err != nil {
 			b.TopupSteps = []model.TopupStep{}
+		}
+	}
+
+	// Parse JSONB input_fields
+	if len(inputFieldsJSON) > 0 {
+		if err := json.Unmarshal(inputFieldsJSON, &b.InputFields); err != nil {
+			b.InputFields = []model.InputField{}
 		}
 	}
 

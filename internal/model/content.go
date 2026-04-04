@@ -63,20 +63,33 @@ type DisplayCategory struct {
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
+// InputField represents a configurable input field for a brand's order form.
+// Admins can define these via the dashboard to customize what data is collected per game.
+type InputField struct {
+	Key         string   `json:"key"`                    // Unique identifier (e.g. "user_id", "zone_id", "server")
+	Type        string   `json:"type"`                   // "text" or "select"
+	Label       string   `json:"label"`                  // Display label (e.g. "User ID", "Server")
+	Placeholder string   `json:"placeholder"`            // Input placeholder text
+	Required    bool     `json:"required"`               // Whether field is mandatory
+	Options     []string `json:"options,omitempty"`       // Options for "select" type
+}
+
 // BrandSetting represents settings for a specific brand
 type BrandSetting struct {
-	BrandName        string      `json:"brand_name" db:"brand_name"`
-	Slug             string      `json:"slug" db:"slug"`
-	CustomImageURL   string      `json:"custom_image_url" db:"custom_image_url"`
-	IsBestSeller     bool        `json:"is_best_seller" db:"is_best_seller"`
-	IsVisible        bool        `json:"is_visible" db:"is_visible"`
-	Status           string      `json:"status" db:"status"` // 'active', 'coming_soon', 'maintenance'
-	TopupSteps       []TopupStep `json:"topup_steps" db:"topup_steps"`
-	Description      string      `json:"description" db:"description"`
-	DisplayCategory  *string     `json:"display_category" db:"display_category"`
-	DisplaySortOrder int         `json:"display_sort_order" db:"display_sort_order"`
-	CreatedAt        time.Time   `json:"created_at" db:"created_at"`
-	UpdatedAt        time.Time   `json:"updated_at" db:"updated_at"`
+	BrandName        string       `json:"brand_name" db:"brand_name"`
+	Slug             string       `json:"slug" db:"slug"`
+	CustomImageURL   string       `json:"custom_image_url" db:"custom_image_url"`
+	IsBestSeller     bool         `json:"is_best_seller" db:"is_best_seller"`
+	IsVisible        bool         `json:"is_visible" db:"is_visible"`
+	Status           string       `json:"status" db:"status"` // 'active', 'coming_soon', 'maintenance'
+	TopupSteps       []TopupStep  `json:"topup_steps" db:"topup_steps"`
+	Description      string       `json:"description" db:"description"`
+	DisplayCategory  *string      `json:"display_category" db:"display_category"`
+	DisplaySortOrder int          `json:"display_sort_order" db:"display_sort_order"`
+	InputFields      []InputField `json:"input_fields" db:"input_fields"`
+	InputSeparator   string       `json:"input_separator" db:"input_separator"`
+	CreatedAt        time.Time    `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at" db:"updated_at"`
 }
 
 // TopupStep represents a single step in the topup guide
@@ -88,11 +101,13 @@ type TopupStep struct {
 
 // BrandPublicData represents public brand settings
 type BrandPublicData struct {
-	BrandName    string      `json:"brand_name"`
-	ImageURL     string      `json:"image_url"`
-	IsBestSeller bool        `json:"is_best_seller"`
-	IsVisible    bool        `json:"is_visible"`
-	Status       string      `json:"status"`
-	TopupSteps   []TopupStep `json:"topup_steps,omitempty"`
-	Description  string      `json:"description,omitempty"`
+	BrandName      string       `json:"brand_name"`
+	ImageURL       string       `json:"image_url"`
+	IsBestSeller   bool         `json:"is_best_seller"`
+	IsVisible      bool         `json:"is_visible"`
+	Status         string       `json:"status"`
+	TopupSteps     []TopupStep  `json:"topup_steps,omitempty"`
+	Description    string       `json:"description,omitempty"`
+	InputFields    []InputField `json:"input_fields,omitempty"`
+	InputSeparator string       `json:"input_separator,omitempty"`
 }

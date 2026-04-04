@@ -292,6 +292,8 @@ type UpdateBrandSettingRequest struct {
 	Description      string            `json:"description"`
 	DisplayCategory  *string           `json:"display_category"`
 	DisplaySortOrder int               `json:"display_sort_order"`
+	InputFields      []model.InputField `json:"input_fields"`
+	InputSeparator   string             `json:"input_separator"`
 }
 
 // UpdateBrandSetting handles PUT /api/v1/admin/brands/{brand}
@@ -324,6 +326,8 @@ func (h *ContentHandler) UpdateBrandSetting(w http.ResponseWriter, r *http.Reque
 		Description:      req.Description,
 		DisplayCategory:  req.DisplayCategory,
 		DisplaySortOrder: req.DisplaySortOrder,
+		InputFields:      req.InputFields,
+		InputSeparator:   req.InputSeparator,
 	}
 
 	if err := h.contentRepo.UpsertBrandSetting(ctx, setting); err != nil {
@@ -372,6 +376,8 @@ func (h *ContentHandler) GetPublicBrandSetting(w http.ResponseWriter, r *http.Re
 		"image_url":          setting.CustomImageURL,
 		"display_category":   setting.DisplayCategory,
 		"display_sort_order": setting.DisplaySortOrder,
+		"input_fields":       setting.InputFields,
+		"input_separator":    setting.InputSeparator,
 		"popup":              popup,
 	})
 }
