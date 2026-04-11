@@ -696,10 +696,9 @@ func (h *WebhookHandler) processAffiliateCommission(order *model.Order) {
 	var commissionAmount float64
 
 	if commissionApplied {
-		// Calculate commission: X% of profit (markup portion)
-		// profit = selling_price - buy_price
 		profit := order.SellingPrice - order.BuyPrice
-		// Effective commission percent = commission_percent minus any discount given
+		
+		// Commission is based on the total transaction amount (SellingPrice)
 		effectivePercent := affiliate.CommissionPercent
 		if channel == model.AffiliateChannelCode && affiliate.DiscountEnabled {
 			effectivePercent = affiliate.CommissionPercent - affiliate.DiscountPercent
@@ -707,7 +706,14 @@ func (h *WebhookHandler) processAffiliateCommission(order *model.Order) {
 		if effectivePercent < 0 {
 			effectivePercent = 0
 		}
-		commissionAmount = profit * (effectivePercent / 100.0)
+		
+		// Commission is calculated from the transaction amount, not just the profit margin
+		commissionAmount = order.SellingPrice * (effectivePercent / 100.0)
+		
+		// Failsafe: Ensure commission never exceeds actual profit (so admin doesn't lose money)
+		if commissionAmount > profit {
+			commissionAmount = profit
+		}
 		if commissionAmount < 0 {
 			commissionAmount = 0
 		}
