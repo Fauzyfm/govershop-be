@@ -79,10 +79,8 @@ func (s *Service) doRequest(method, endpoint string, body []byte) ([]byte, error
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
 	req.Header.Set("va", s.config.IpaymuVA)
 	req.Header.Set("signature", signature)
-	req.Header.Set("timestamp", fmt.Sprintf("%d", time.Now().Unix()))
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
