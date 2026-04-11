@@ -66,6 +66,18 @@ func (s *Service) generateSignature(method string, body []byte) string {
 func (s *Service) doRequest(method, endpoint string, body []byte) ([]byte, error) {
 	url := s.config.IpaymuBaseURL + endpoint
 
+	// Debug: log credentials being used (partial for security)
+	vaPreview := s.config.IpaymuVA
+	if len(vaPreview) > 6 {
+		vaPreview = vaPreview[:6] + "..."
+	}
+	keyPreview := s.config.IpaymuKey
+	if len(keyPreview) > 6 {
+		keyPreview = keyPreview[:6] + "..."
+	}
+	log.Printf("[iPaymu] DEBUG: %s %s | VA=%s Key=%s BaseURL=%s", method, endpoint, vaPreview, keyPreview, s.config.IpaymuBaseURL)
+	log.Printf("[iPaymu] DEBUG: body=%s", string(body))
+
 	signature := s.generateSignature(method, body)
 
 	var reqBody io.Reader
@@ -92,6 +104,9 @@ func (s *Service) doRequest(method, endpoint string, body []byte) ([]byte, error
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
+
+	// Debug: log full response
+	log.Printf("[iPaymu] DEBUG: HTTP %d | Response=%s", resp.StatusCode, string(respBody))
 
 	return respBody, nil
 }
