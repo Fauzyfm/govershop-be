@@ -504,6 +504,11 @@ func (h *OrderHandler) GetOrderStatus(w http.ResponseWriter, r *http.Request) {
 							}
 						}
 
+						// Process affiliate commission if success and previously not success
+						if newOrderStatus == model.OrderStatusSuccess && order.AffiliateID != nil && order.Status != model.OrderStatusSuccess {
+							go h.processAffiliateCommission(order)
+						}
+
 						// Update the order object for the API response
 						order.Status = newOrderStatus
 						order.DigiflazzStatus = dfResp.Data.Status
@@ -792,4 +797,108 @@ func (h *OrderHandler) processTopup(order *model.Order) {
 			log.Printf("CRITICAL: Failed to refund member balance for order %s: %v", order.ID, err)
 		}
 	}
+
+	// PROCESS AFFILIATE COMMISSION ON SYNCHRONOUS SUCCESS
+	if orderStatus == model.OrderStatusSuccess && order.AffiliateID != nil {
+		go h.processAffiliateCommission(order)
+	}
+}
+
+// processAffiliateCommission handles affiliate commission after successful transaction
+func (h *OrderHandler) processAffiliateCommission(order *model.Order) {
+	ctx := context.Background()
+
+	if order.AffiliateID == nil {
+		return
+	}
+
+	affiliate, err := h.affiliateRepo.GetByID(ctx, *order.AffiliateID)
+	if err != nil || affiliate == nil {
+		log.Printf("[Affiliate] Failed to get affiliate %d for order %s: %v", *order.AffiliateID, order.ID, err)
+		return
+	}
+
+	// Check min transaction amount
+	if order.SellingPrice < affiliate.MinTransactionAmount {
+		log.Printf("[Affiliate] Order %s below min transaction (%.0f < %.0f), no commission",
+			order.ID, order.SellingPrice, affiliate.MinTransactionAmount)
+
+		// Still log the usage but with commission_applied = false
+		channel := model.AffiliateChannelLink
+		if order.AffiliateChannel != nil {
+			channel = *order.AffiliateChannel
+		}
+		usage := &model.AffiliateUsage{
+			AffiliateID:       affiliate.ID,
+			CustomerNo:        order.CustomerNo,
+			OrderID:           order.ID,
+			Channel:           channel,
+			TransactionAmount: order.SellingPrice,
+			DiscountApplied:   false,
+			DiscountAmount:    0,
+			CommissionApplied: false,
+			CommissionAmount:  0,
+		}
+		_ = h.affiliateRepo.CreateUsage(ctx, usage)
+		return
+	}
+
+	// Check max commission uses per customer per month
+	usageCount, err := h.affiliateRepo.CountUsagesByCustomerThisMonth(ctx, affiliate.ID, order.CustomerNo)
+	if err != nil {
+		log.Printf("[Affiliate] Failed to count usages for order %s: %v", order.ID, err)
+		return
+	}
+
+	channel := model.AffiliateChannelLink
+	if order.AffiliateChannel != nil {
+		channel = *order.AffiliateChannel
+	}
+
+	commissionApplied := usageCount < affiliate.MaxCommissionUses
+	var commissionAmount float64
+
+	if commissionApplied {
+		profit := order.SellingPrice - order.BuyPrice
+		effectivePercent := affiliate.CommissionPercent
+		if channel == model.AffiliateChannelCode && affiliate.DiscountEnabled {
+			effectivePercent = affiliate.CommissionPercent - affiliate.DiscountPercent
+		}
+		if effectivePercent < 0 {
+			effectivePercent = 0
+		}
+		commissionAmount = profit * (effectivePercent / 100.0)
+		if commissionAmount < 0 {
+			commissionAmount = 0
+		}
+
+		if commissionAmount > 0 {
+			if err := h.affiliateRepo.AddAffiliateBalance(ctx, affiliate.UserID, commissionAmount); err != nil {
+				log.Printf("CRITICAL: Failed to add affiliate balance for user %d, order %s: %v",
+					affiliate.UserID, order.ID, err)
+			} else {
+				log.Printf("[Affiliate] Commission Rp %.0f credited to user %d for order %s (channel=%s)",
+					commissionAmount, affiliate.UserID, order.ID, channel)
+			}
+		} else {
+			log.Printf("[Affiliate] No profit on order %s, commission is 0", order.ID)
+		}
+	} else {
+		log.Printf("[Affiliate] Max commission uses reached for customer %s on affiliate %d",
+			order.CustomerNo, affiliate.ID)
+	}
+
+	// Log usage
+	usage := &model.AffiliateUsage{
+		AffiliateID:       affiliate.ID,
+		CustomerNo:        order.CustomerNo,
+		OrderID:           order.ID,
+		Channel:           channel,
+		TransactionAmount: order.SellingPrice,
+		DiscountApplied:   order.AffiliateDiscount > 0,
+		DiscountAmount:    order.AffiliateDiscount,
+		CommissionApplied: commissionApplied,
+		CommissionAmount:  commissionAmount,
+	}
+	_ = h.affiliateRepo.CreateUsage(ctx, usage)
 }
