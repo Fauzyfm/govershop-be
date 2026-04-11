@@ -81,6 +81,7 @@ func (s *Service) doRequest(method, endpoint string, body []byte) ([]byte, error
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("va", s.config.IpaymuVA)
 	req.Header.Set("signature", signature)
+	req.Header.Set("timestamp", time.Now().Format("20060102150405"))
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -216,10 +217,14 @@ type DirectPaymentResponse struct {
 
 // CreateDirectPayment creates a direct payment via iPaymu
 func (s *Service) CreateDirectPayment(req DirectPaymentRequest) (*DirectPaymentResponse, error) {
-	jsonPayload, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("failed to encode payload: %w", err)
 	}
+	// json.Encoder.Encode appends a newline, we must remove it for exact signature matching
+	jsonPayload := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 
 	log.Printf("[iPaymu] CreateDirectPayment: ref=%s amount=%d method=%s channel=%s",
 		req.ReferenceID, req.Amount, req.PaymentMethod, req.PaymentChannel)
@@ -287,10 +292,13 @@ func (s *Service) CheckTransaction(transactionID int) (*CheckTransactionResponse
 		TransactionID: transactionID,
 	}
 
-	jsonPayload, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
+		return nil, fmt.Errorf("failed to encode payload: %w", err)
 	}
+	jsonPayload := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 
 	respBody, err := s.doRequest("POST", "/api/v2/transaction", jsonPayload)
 	if err != nil {

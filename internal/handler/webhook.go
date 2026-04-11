@@ -455,6 +455,11 @@ func (h *WebhookHandler) processTopup(order *model.Order) {
 	// Send Telegram notification for final results, or start polling if Pending
 	if resp.Data.Status == "Sukses" || resp.Data.Status == "Gagal" {
 		go h.telegramSvc.NotifyTopupResult(order, resp.Data.Status, resp.Data.RC, resp.Data.SN, resp.Data.Message)
+
+		// PROCESS AFFILIATE COMMISSION ON SYNCHRONOUS SUCCESS
+		if orderStatus == model.OrderStatusSuccess && order.AffiliateID != nil {
+			go h.processAffiliateCommission(order)
+		}
 	} else {
 		// Status is Pending — start polling DB until final result
 		go h.pollOrderStatus(order.ID)
@@ -702,7 +707,7 @@ func (h *WebhookHandler) processAffiliateCommission(order *model.Order) {
 		if effectivePercent < 0 {
 			effectivePercent = 0
 		}
-		commissionAmount = profit * (effectivePercent / affiliate.CommissionPercent)
+		commissionAmount = profit * (effectivePercent / 100.0)
 		if commissionAmount < 0 {
 			commissionAmount = 0
 		}
