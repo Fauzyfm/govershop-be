@@ -21,15 +21,16 @@ import (
 
 // OrderHandler handles order-related HTTP requests
 type OrderHandler struct {
-	config       *config.Config
-	orderRepo    *repository.OrderRepository
-	paymentRepo  *repository.PaymentRepository
-	productRepo  *repository.ProductRepository
-	userRepo     *repository.UserRepository
-	digiflazzSvc *digiflazz.Service
-	ipaymuSvc    *ipaymu.Service
-	emailSvc     *email.Service
-	telegramSvc  *telegram.Service
+	config        *config.Config
+	orderRepo     *repository.OrderRepository
+	paymentRepo   *repository.PaymentRepository
+	productRepo   *repository.ProductRepository
+	userRepo      *repository.UserRepository
+	affiliateRepo *repository.AffiliateRepository
+	digiflazzSvc  *digiflazz.Service
+	ipaymuSvc     *ipaymu.Service
+	emailSvc      *email.Service
+	telegramSvc   *telegram.Service
 }
 
 // NewOrderHandler creates a new OrderHandler
@@ -39,21 +40,23 @@ func NewOrderHandler(
 	paymentRepo *repository.PaymentRepository,
 	productRepo *repository.ProductRepository,
 	userRepo *repository.UserRepository,
+	affiliateRepo *repository.AffiliateRepository,
 	digiflazzSvc *digiflazz.Service,
 	ipaymuSvc *ipaymu.Service,
 	emailSvc *email.Service,
 	telegramSvc *telegram.Service,
 ) *OrderHandler {
 	return &OrderHandler{
-		config:       cfg,
-		orderRepo:    orderRepo,
-		paymentRepo:  paymentRepo,
-		productRepo:  productRepo,
-		userRepo:     userRepo,
-		digiflazzSvc: digiflazzSvc,
-		ipaymuSvc:    ipaymuSvc,
-		emailSvc:     emailSvc,
-		telegramSvc:  telegramSvc,
+		config:        cfg,
+		orderRepo:     orderRepo,
+		paymentRepo:   paymentRepo,
+		productRepo:   productRepo,
+		userRepo:      userRepo,
+		affiliateRepo: affiliateRepo,
+		digiflazzSvc:  digiflazzSvc,
+		ipaymuSvc:     ipaymuSvc,
+		emailSvc:      emailSvc,
+		telegramSvc:   telegramSvc,
 	}
 }
 
@@ -137,6 +140,20 @@ func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		CustomerEmail: req.CustomerEmail,
 		CustomerPhone: req.CustomerPhone,
 		CustomerName:  req.CustomerName,
+	}
+
+	// Attach affiliate info if provided (from link ref or code input)
+	if req.AffiliateCode != "" {
+		affiliate, affErr := h.affiliateRepo.GetByCode(ctx, req.AffiliateCode)
+		if affErr == nil && affiliate != nil && affiliate.Status == model.AffiliateStatusActive {
+			order.AffiliateID = &affiliate.ID
+			channel := req.AffiliateChannel
+			if channel == "" {
+				channel = model.AffiliateChannelLink
+			}
+			order.AffiliateChannel = &channel
+			log.Printf("[CreateOrder] Affiliate attached: code=%s id=%d channel=%s", affiliate.Code, affiliate.ID, channel)
+		}
 	}
 
 	if err := h.orderRepo.Create(ctx, order); err != nil {

@@ -39,19 +39,24 @@ type Order struct {
 	CreatedAt       time.Time   `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time   `json:"updated_at" db:"updated_at"`
 	CompletedAt     *time.Time  `json:"completed_at,omitempty" db:"completed_at"`
-	OrderSource     string      `json:"order_source" db:"order_source"`
-	AdminNotes      string      `json:"admin_notes,omitempty" db:"admin_notes"`
-	MemberID        *int        `json:"member_id,omitempty" db:"member_id"`
-	MemberPrice     *float64    `json:"member_price,omitempty" db:"member_price"`
+	OrderSource      string      `json:"order_source" db:"order_source"`
+	AdminNotes       string      `json:"admin_notes,omitempty" db:"admin_notes"`
+	MemberID         *int        `json:"member_id,omitempty" db:"member_id"`
+	MemberPrice      *float64    `json:"member_price,omitempty" db:"member_price"`
+	AffiliateID      *int        `json:"affiliate_id,omitempty" db:"affiliate_id"`
+	AffiliateChannel *string     `json:"affiliate_channel,omitempty" db:"affiliate_channel"`
+	AffiliateDiscount float64    `json:"affiliate_discount,omitempty" db:"affiliate_discount"`
 }
 
 // CreateOrderRequest is the request body for creating an order
 type CreateOrderRequest struct {
-	BuyerSKUCode  string `json:"buyer_sku_code" validate:"required"`
-	CustomerNo    string `json:"customer_no" validate:"required"`
-	CustomerEmail string `json:"customer_email,omitempty"`
-	CustomerPhone string `json:"customer_phone,omitempty"`
-	CustomerName  string `json:"customer_name,omitempty"`
+	BuyerSKUCode     string `json:"buyer_sku_code" validate:"required"`
+	CustomerNo       string `json:"customer_no" validate:"required"`
+	CustomerEmail    string `json:"customer_email,omitempty"`
+	CustomerPhone    string `json:"customer_phone,omitempty"`
+	CustomerName     string `json:"customer_name,omitempty"`
+	AffiliateCode    string `json:"affiliate_code,omitempty"`    // ref code from link or manual input
+	AffiliateChannel string `json:"affiliate_channel,omitempty"` // "link" or "code"
 }
 
 // OrderResponse is the response format for FE

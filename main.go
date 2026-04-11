@@ -71,11 +71,12 @@ func main() {
 	contentRepo := repository.NewContentRepository(db)
 	adminSecurityRepo := repository.NewAdminSecurityRepository(db)
 	userRepo := repository.NewUserRepository(db)
+	affiliateRepo := repository.NewAffiliateRepository(db)
 
 	// Initialize handlers
 	productHandler := handler.NewProductHandler(productRepo)
-	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, userRepo, digiflazzSvc, ipaymuSvc, emailSvc, telegramSvc)
-	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, digiflazzSvc, ipaymuSvc, telegramSvc)
+	orderHandler := handler.NewOrderHandler(cfg, orderRepo, paymentRepo, productRepo, userRepo, affiliateRepo, digiflazzSvc, ipaymuSvc, emailSvc, telegramSvc)
+	webhookHandler := handler.NewWebhookHandler(cfg, orderRepo, paymentRepo, webhookRepo, userRepo, affiliateRepo, digiflazzSvc, ipaymuSvc, telegramSvc)
 	adminHandler := handler.NewAdminHandler(cfg, digiflazzSvc, productRepo, orderRepo, syncLogRepo, paymentRepo, pakasirSvc, webhookRepo, userRepo)
 
 	// Start background jobs
@@ -84,7 +85,8 @@ func main() {
 	validationHandler := handler.NewValidationHandler(cfg, productRepo, orderRepo, digiflazzSvc, ipaymuSvc)
 	contentHandler := handler.NewContentHandler(contentRepo)
 	totpHandler := handler.NewTOTPHandler(cfg, adminSecurityRepo, orderRepo, paymentRepo, userRepo, digiflazzSvc)
-	memberHandler := handler.NewMemberHandler(cfg, userRepo, productRepo, orderRepo, digiflazzSvc, emailSvc, telegramSvc)
+	memberHandler := handler.NewMemberHandler(cfg, userRepo, productRepo, orderRepo, affiliateRepo, digiflazzSvc, emailSvc, telegramSvc)
+	affiliateHandler := handler.NewAffiliateHandler(affiliateRepo, userRepo)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg)
@@ -159,6 +161,10 @@ func main() {
 
 	// Payment methods (Standard: 60 req/min)
 	mux.HandleFunc("GET /api/v1/payment-methods", standardRL.Limit(orderHandler.GetPaymentMethods))
+
+	// Affiliate public endpoints (Standard: 60 req/min)
+	mux.HandleFunc("POST /api/v1/affiliate/validate", standardRL.Limit(affiliateHandler.ValidateAffiliate))
+	mux.HandleFunc("GET /api/v1/affiliate/{code}", standardRL.Limit(affiliateHandler.GetAffiliateByCode))
 
 	// Admin Auth (Strict: 5 req/min)
 	mux.HandleFunc("POST /api/v1/admin/login", strictRL.Limit(adminHandler.Login))
@@ -237,6 +243,11 @@ func main() {
 	mux.HandleFunc("DELETE /api/v1/admin/members/{id}", standardRL.Limit(authMiddleware.AdminAuth(memberHandler.DeleteMember)))
 	mux.HandleFunc("POST /api/v1/admin/members/{id}/topup", moderateRL.Limit(authMiddleware.AdminAuth(memberHandler.TopupMember)))
 
+	// Admin Affiliate Management
+	mux.HandleFunc("GET /api/v1/admin/affiliates", standardRL.Limit(authMiddleware.AdminAuth(affiliateHandler.AdminListAffiliates)))
+	mux.HandleFunc("POST /api/v1/admin/affiliates", standardRL.Limit(authMiddleware.AdminAuth(affiliateHandler.AdminCreateAffiliate)))
+	mux.HandleFunc("PUT /api/v1/admin/affiliates/{id}", standardRL.Limit(authMiddleware.AdminAuth(affiliateHandler.AdminUpdateAffiliate)))
+
 	// ==========================================
 	// MEMBER ROUTES (Protected with Member Auth Middleware)
 	// ==========================================
@@ -251,6 +262,10 @@ func main() {
 	mux.HandleFunc("POST /api/v1/member/orders", moderateRL.Limit(authMiddleware.MemberAuth(memberHandler.CreateOrder)))
 	mux.HandleFunc("POST /api/v1/member/validate-account", moderateRL.Limit(authMiddleware.MemberAuth(memberHandler.ValidateMemberAccount)))
 	mux.HandleFunc("PUT /api/v1/member/password", strictRL.Limit(authMiddleware.MemberAuth(memberHandler.ChangePassword)))
+
+	// Member Affiliate Dashboard
+	mux.HandleFunc("GET /api/v1/member/affiliate", standardRL.Limit(authMiddleware.MemberAuth(affiliateHandler.GetMyAffiliate)))
+	mux.HandleFunc("PUT /api/v1/member/affiliate/settings", standardRL.Limit(authMiddleware.MemberAuth(affiliateHandler.UpdateMyAffiliateSettings)))
 
 	// Apply middleware to API routes
 	var apiHandler http.Handler = mux

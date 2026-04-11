@@ -53,11 +53,13 @@ const (
 
 // CreateUserRequest for admin creating a new member
 type CreateUserRequest struct {
-	Username string `json:"username" validate:"required,min=3,max=50"`
-	Password string `json:"password" validate:"required,min=6"`
-	Email    string `json:"email,omitempty" validate:"omitempty,email"`
-	FullName string `json:"full_name" validate:"required"`
-	WhatsApp string `json:"whatsapp,omitempty"`
+	Username          string  `json:"username" validate:"required,min=3,max=50"`
+	Password          string  `json:"password" validate:"required,min=6"`
+	Email             string  `json:"email,omitempty" validate:"omitempty,email"`
+	FullName          string  `json:"full_name" validate:"required"`
+	WhatsApp          string  `json:"whatsapp,omitempty"`
+	AffiliateCode     string  `json:"affiliate_code" validate:"required"`
+	CommissionPercent float64 `json:"commission_percent,omitempty"` // Default 2% if not set
 }
 
 // UpdateUserRequest for updating user data

@@ -23,13 +23,14 @@ import (
 
 // MemberHandler handles member-related HTTP requests
 type MemberHandler struct {
-	config       *config.Config
-	userRepo     *repository.UserRepository
-	productRepo  *repository.ProductRepository
-	orderRepo    *repository.OrderRepository
-	digiflazzSvc *digiflazz.Service
-	emailSvc     *email.Service
-	telegramSvc  *telegram.Service
+	config        *config.Config
+	userRepo      *repository.UserRepository
+	productRepo   *repository.ProductRepository
+	orderRepo     *repository.OrderRepository
+	affiliateRepo *repository.AffiliateRepository
+	digiflazzSvc  *digiflazz.Service
+	emailSvc      *email.Service
+	telegramSvc   *telegram.Service
 }
 
 // NewMemberHandler creates a new MemberHandler
@@ -38,18 +39,20 @@ func NewMemberHandler(
 	userRepo *repository.UserRepository,
 	productRepo *repository.ProductRepository,
 	orderRepo *repository.OrderRepository,
+	affiliateRepo *repository.AffiliateRepository,
 	digiflazzSvc *digiflazz.Service,
 	emailSvc *email.Service,
 	telegramSvc *telegram.Service,
 ) *MemberHandler {
 	return &MemberHandler{
-		config:       cfg,
-		userRepo:     userRepo,
-		productRepo:  productRepo,
-		orderRepo:    orderRepo,
-		digiflazzSvc: digiflazzSvc,
-		emailSvc:     emailSvc,
-		telegramSvc:  telegramSvc,
+		config:        cfg,
+		userRepo:      userRepo,
+		productRepo:   productRepo,
+		orderRepo:     orderRepo,
+		affiliateRepo: affiliateRepo,
+		digiflazzSvc:  digiflazzSvc,
+		emailSvc:      emailSvc,
+		telegramSvc:   telegramSvc,
 	}
 }
 
@@ -942,9 +945,25 @@ func (h *MemberHandler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, _ := h.userRepo.GetByUsername(r.Context(), req.Username)
+	// Validate affiliate code is provided
+	if req.AffiliateCode == "" {
+		BadRequest(w, "Kode affiliate wajib diisi")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Check username uniqueness
+	existing, _ := h.userRepo.GetByUsername(ctx, req.Username)
 	if existing != nil {
 		Error(w, http.StatusConflict, "Username sudah digunakan")
+		return
+	}
+
+	// Check affiliate code uniqueness
+	existingAffiliate, _ := h.affiliateRepo.GetByCode(ctx, req.AffiliateCode)
+	if existingAffiliate != nil {
+		Error(w, http.StatusConflict, "Kode affiliate sudah digunakan oleh user lain")
 		return
 	}
 
@@ -971,11 +990,38 @@ func (h *MemberHandler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		user.WhatsApp = &req.WhatsApp
 	}
 
-	if err := h.userRepo.Create(r.Context(), user); err != nil {
+	if err := h.userRepo.Create(ctx, user); err != nil {
 		log.Printf("Error creating member: %v", err)
 		InternalError(w, "Failed to create member")
 		return
 	}
+
+	// Auto-create affiliate partner record
+	commissionPercent := req.CommissionPercent
+	if commissionPercent == 0 {
+		commissionPercent = 2.0 // Default 2%
+	}
+
+	affiliate := &model.AffiliatePartner{
+		UserID:               user.ID,
+		Code:                 strings.ToUpper(req.AffiliateCode),
+		CommissionPercent:    commissionPercent,
+		DiscountEnabled:      false,
+		DiscountPercent:      0,
+		MinDiscountAmount:    0,
+		MinTransactionAmount: 20000, // Default Rp 20.000
+		MaxDiscountUses:      3,
+		MaxCommissionUses:    10,
+		Status:               model.AffiliateStatusActive,
+	}
+
+	if err := h.affiliateRepo.Create(ctx, affiliate); err != nil {
+		log.Printf("Error creating affiliate for user %d: %v", user.ID, err)
+		// Member already created, log the error but don't fail the whole request
+		// Admin can manually create affiliate later
+	}
+
+	log.Printf("[Admin] Created member %s (ID: %d) with affiliate code %s", user.Username, user.ID, affiliate.Code)
 
 	Created(w, "Member berhasil dibuat", user.ToResponse())
 }

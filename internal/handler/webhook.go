@@ -23,14 +23,15 @@ import (
 
 // WebhookHandler handles webhook callbacks from external services
 type WebhookHandler struct {
-	config       *config.Config
-	orderRepo    *repository.OrderRepository
-	paymentRepo  *repository.PaymentRepository
-	webhookRepo  *repository.WebhookLogRepository
-	userRepo     *repository.UserRepository
-	digiflazzSvc *digiflazz.Service
-	ipaymuSvc    *ipaymu.Service
-	telegramSvc  *telegram.Service
+	config        *config.Config
+	orderRepo     *repository.OrderRepository
+	paymentRepo   *repository.PaymentRepository
+	webhookRepo   *repository.WebhookLogRepository
+	userRepo      *repository.UserRepository
+	affiliateRepo *repository.AffiliateRepository
+	digiflazzSvc  *digiflazz.Service
+	ipaymuSvc     *ipaymu.Service
+	telegramSvc   *telegram.Service
 }
 
 // NewWebhookHandler creates a new WebhookHandler
@@ -40,19 +41,21 @@ func NewWebhookHandler(
 	paymentRepo *repository.PaymentRepository,
 	webhookRepo *repository.WebhookLogRepository,
 	userRepo *repository.UserRepository,
+	affiliateRepo *repository.AffiliateRepository,
 	digiflazzSvc *digiflazz.Service,
 	ipaymuSvc *ipaymu.Service,
 	telegramSvc *telegram.Service,
 ) *WebhookHandler {
 	return &WebhookHandler{
-		config:       cfg,
-		orderRepo:    orderRepo,
-		paymentRepo:  paymentRepo,
-		webhookRepo:  webhookRepo,
-		userRepo:     userRepo,
-		digiflazzSvc: digiflazzSvc,
-		ipaymuSvc:    ipaymuSvc,
-		telegramSvc:  telegramSvc,
+		config:        cfg,
+		orderRepo:     orderRepo,
+		paymentRepo:   paymentRepo,
+		webhookRepo:   webhookRepo,
+		userRepo:      userRepo,
+		affiliateRepo: affiliateRepo,
+		digiflazzSvc:  digiflazzSvc,
+		ipaymuSvc:     ipaymuSvc,
+		telegramSvc:   telegramSvc,
 	}
 }
 
@@ -623,7 +626,115 @@ func (h *WebhookHandler) HandleDigiflazzWebhook(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	// PROCESS AFFILIATE COMMISSION ON SUCCESS
+	if orderStatus == model.OrderStatusSuccess && order.AffiliateID != nil {
+		go h.processAffiliateCommission(order)
+	}
+
 	h.webhookRepo.MarkProcessed(ctx, logID, "")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
+}
+
+// processAffiliateCommission handles affiliate commission after successful transaction
+func (h *WebhookHandler) processAffiliateCommission(order *model.Order) {
+	ctx := context.Background()
+
+	if order.AffiliateID == nil {
+		return
+	}
+
+	affiliate, err := h.affiliateRepo.GetByID(ctx, *order.AffiliateID)
+	if err != nil || affiliate == nil {
+		log.Printf("[Affiliate] Failed to get affiliate %d for order %s: %v", *order.AffiliateID, order.ID, err)
+		return
+	}
+
+	// Check min transaction amount
+	if order.SellingPrice < affiliate.MinTransactionAmount {
+		log.Printf("[Affiliate] Order %s below min transaction (%.0f < %.0f), no commission",
+			order.ID, order.SellingPrice, affiliate.MinTransactionAmount)
+
+		// Still log the usage but with commission_applied = false
+		channel := model.AffiliateChannelLink
+		if order.AffiliateChannel != nil {
+			channel = *order.AffiliateChannel
+		}
+		usage := &model.AffiliateUsage{
+			AffiliateID:       affiliate.ID,
+			CustomerNo:        order.CustomerNo,
+			OrderID:           order.ID,
+			Channel:           channel,
+			TransactionAmount: order.SellingPrice,
+			DiscountApplied:   false,
+			DiscountAmount:    0,
+			CommissionApplied: false,
+			CommissionAmount:  0,
+		}
+		_ = h.affiliateRepo.CreateUsage(ctx, usage)
+		return
+	}
+
+	// Check max commission uses per customer per month (anti-abuse: 10x default)
+	usageCount, err := h.affiliateRepo.CountUsagesByCustomerThisMonth(ctx, affiliate.ID, order.CustomerNo)
+	if err != nil {
+		log.Printf("[Affiliate] Failed to count usages for order %s: %v", order.ID, err)
+		return
+	}
+
+	channel := model.AffiliateChannelLink
+	if order.AffiliateChannel != nil {
+		channel = *order.AffiliateChannel
+	}
+
+	commissionApplied := usageCount < affiliate.MaxCommissionUses
+	var commissionAmount float64
+
+	if commissionApplied {
+		// Calculate commission: X% of profit (markup portion)
+		// profit = selling_price - buy_price
+		profit := order.SellingPrice - order.BuyPrice
+		// Effective commission percent = commission_percent minus any discount given
+		effectivePercent := affiliate.CommissionPercent
+		if channel == model.AffiliateChannelCode && affiliate.DiscountEnabled {
+			effectivePercent = affiliate.CommissionPercent - affiliate.DiscountPercent
+		}
+		if effectivePercent < 0 {
+			effectivePercent = 0
+		}
+		commissionAmount = profit * (effectivePercent / affiliate.CommissionPercent)
+		if commissionAmount < 0 {
+			commissionAmount = 0
+		}
+
+		// Add to streamer's affiliate balance
+		if commissionAmount > 0 {
+			if err := h.affiliateRepo.AddAffiliateBalance(ctx, affiliate.UserID, commissionAmount); err != nil {
+				log.Printf("CRITICAL: Failed to add affiliate balance for user %d, order %s: %v",
+					affiliate.UserID, order.ID, err)
+			} else {
+				log.Printf("[Affiliate] Commission Rp %.0f credited to user %d for order %s (channel=%s)",
+					commissionAmount, affiliate.UserID, order.ID, channel)
+			}
+		}
+	} else {
+		log.Printf("[Affiliate] Max commission uses reached for customer %s on affiliate %d (count=%d, max=%d)",
+			order.CustomerNo, affiliate.ID, usageCount, affiliate.MaxCommissionUses)
+	}
+
+	// Log usage
+	usage := &model.AffiliateUsage{
+		AffiliateID:       affiliate.ID,
+		CustomerNo:        order.CustomerNo,
+		OrderID:           order.ID,
+		Channel:           channel,
+		TransactionAmount: order.SellingPrice,
+		DiscountApplied:   order.AffiliateDiscount > 0,
+		DiscountAmount:    order.AffiliateDiscount,
+		CommissionApplied: commissionApplied,
+		CommissionAmount:  commissionAmount,
+	}
+	if err := h.affiliateRepo.CreateUsage(ctx, usage); err != nil {
+		log.Printf("[Affiliate] Failed to create usage log for order %s: %v", order.ID, err)
+	}
 }

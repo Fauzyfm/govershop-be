@@ -59,10 +59,11 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 			buy_price, selling_price, status,
 			customer_email, customer_phone, customer_name,
 			member_id, member_price, order_source,
-			digiflazz_status, digiflazz_rc, digiflazz_message, serial_number
+			digiflazz_status, digiflazz_rc, digiflazz_message, serial_number,
+			affiliate_id, affiliate_channel, affiliate_discount
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-			$14, $15, $16, $17
+			$14, $15, $16, $17, $18, $19, $20
 		)
 		RETURNING id, created_at, updated_at
 	`
@@ -73,6 +74,7 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 		order.CustomerEmail, order.CustomerPhone, order.CustomerName,
 		order.MemberID, order.MemberPrice, order.OrderSource,
 		order.DigiflazzStatus, order.DigiflazzRC, order.DigiflazzMsg, order.SerialNumber,
+		order.AffiliateID, order.AffiliateChannel, order.AffiliateDiscount,
 	).Scan(&order.ID, &order.CreatedAt, &order.UpdatedAt)
 
 	if err != nil {
@@ -101,7 +103,8 @@ func (r *OrderRepository) GetByID(ctx context.Context, id string) (*model.Order,
 		       COALESCE(digiflazz_status, ''), COALESCE(digiflazz_rc, ''), COALESCE(serial_number, ''), COALESCE(digiflazz_message, ''),
 		       COALESCE(customer_email, ''), COALESCE(customer_phone, ''), COALESCE(customer_name, ''),
 		       member_id, member_price,
-		       created_at, updated_at, completed_at
+		       created_at, updated_at, completed_at,
+		       affiliate_id, affiliate_channel, COALESCE(affiliate_discount, 0)
 		FROM orders
 		WHERE id = $1
 	`
@@ -114,6 +117,7 @@ func (r *OrderRepository) GetByID(ctx context.Context, id string) (*model.Order,
 		&o.CustomerEmail, &o.CustomerPhone, &o.CustomerName,
 		&o.MemberID, &o.MemberPrice,
 		&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
+		&o.AffiliateID, &o.AffiliateChannel, &o.AffiliateDiscount,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get order: %w", err)
@@ -130,7 +134,8 @@ func (r *OrderRepository) GetByRefID(ctx context.Context, refID string) (*model.
 		       COALESCE(digiflazz_status, ''), COALESCE(digiflazz_rc, ''), COALESCE(serial_number, ''), COALESCE(digiflazz_message, ''),
 		       COALESCE(customer_email, ''), COALESCE(customer_phone, ''), COALESCE(customer_name, ''),
 		       member_id, member_price,
-		       created_at, updated_at, completed_at
+		       created_at, updated_at, completed_at,
+		       affiliate_id, affiliate_channel, COALESCE(affiliate_discount, 0)
 		FROM orders
 		WHERE ref_id = $1
 	`
@@ -143,6 +148,7 @@ func (r *OrderRepository) GetByRefID(ctx context.Context, refID string) (*model.
 		&o.CustomerEmail, &o.CustomerPhone, &o.CustomerName,
 		&o.MemberID, &o.MemberPrice,
 		&o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
+		&o.AffiliateID, &o.AffiliateChannel, &o.AffiliateDiscount,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get order by ref_id: %w", err)
